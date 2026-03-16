@@ -1,0 +1,468 @@
+
+import React, { useState, useEffect } from 'react';
+import { Session } from '@supabase/supabase-js';
+import { supabase } from '../../lib/supabase.ts';
+import { useSettings } from '../../contexts/SettingsContext.tsx';
+import { TeacherProfile, TimetableEntry, Announcement, Class, Profile, TeacherAttendance } from '../../types.ts';
+import { AttendanceIcon, AcademicsIcon, BillingIcon, MessagesIcon } from '../icons/NavIcons.tsx';
+import { Clock, LogIn, LogOut, MapPin } from 'lucide-react';
+import { verifyLocation } from '../../lib/location.ts';
+
+interface TeacherDashboardHomeProps {
+  session: Session;
+  profile: Profile;
+  setActivePage: (page: string) => void;
+}
+
+const Widget: React.FC<{ title: string; children: React.ReactNode; className?: string }> = ({ title, children, className }) => (
+    <div className={`bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md ${className}`}>
+        <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4 border-b dark:border-gray-700 pb-2">{title}</h3>
+        {children}
+    </div>
+);
+
+const QuickAction: React.FC<{ title: string; icon: React.FC<{ className?: string }>; onClick: () => void; }> = ({ title, icon: Icon, onClick }) => (
+    <button onClick={onClick} className="flex flex-col items-center justify-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors w-full h-full">
+        <Icon className="w-8 h-8 text-brand-600 dark:text-brand-400 mb-2" />
+        <span className="text-sm font-semibold text-gray-700 dark:text-white text-center">{title}</span>
+    </button>
+);
+
+const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, profile, setActivePage }) => {
+    const { settings } = useSettings();
+    const [schedule, setSchedule] = useState<TimetableEntry[]>([]);
+    const [homeroomClass, setHomeroomClass] = useState<Class | null>(null);
+    const [isAttendanceTaken, setIsAttendanceTaken] = useState(false);
+    const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+    const [staffAttendance, setStaffAttendance] = useState<TeacherAttendance | null>(null);
+    const [teacherId, setTeacherId] = useState<string | null>(null);
+    const [schoolId, setSchoolId] = useState<string | null>(null);
+    const [isCheckingIn, setIsCheckingIn] = useState(false);
+    const [locationError, setLocationError] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const fetchDashboardData = async () => {
+            setIsLoading(true);
+            setError(null);
+            try {
+                const today = new Date();
+                const dayOfWeek = today.getDay(); // Sunday - 0, Monday - 1, etc.
+                const todayStr = today.toISOString().split('T')[0];
+                
+                const { data: teacherId, error: rpcError } = await supabase
+                    .rpc('get_teacher_id_by_auth_email');
+                
+                if (rpcError) throw rpcError;
+                setTeacherId(teacherId);
+                
+                if (!teacherId) {
+                    throw new Error("Could not find your teacher profile. Please contact an administrator to add you to the Staff List.");
+                }
+
+                const { data: teacherData, error: teacherError } = await supabase
+                    .from('teachers')
+                    .select('*, teachable_classes:teacher_classes(is_homeroom, class:classes(*))')
+                    .eq('id', teacherId)
+                    .single();
+                
+                if (teacherError) throw teacherError;
+                
+                // Use school_id from teacher record if profile's is missing
+                const fetchedSchoolId = teacherData.school_id || profile.school_id;
+                setSchoolId(fetchedSchoolId);
+                
+                const foundHomeroom = (teacherData.teachable_classes as any[] || []).find(tc => tc.is_homeroom)?.class;
+                setHomeroomClass(foundHomeroom || null);
+
+                const { data: scheduleData, error: scheduleError } = await supabase
+                    .from('timetable')
+                    .select('*, time_slot:time_slots(*), subject:subjects(name), class:classes(name)')
+                    .eq('teacher_id', teacherData.id)
+                    .eq('day_of_week', dayOfWeek)
+                    .eq('school_id', fetchedSchoolId)
+                    .order('start_time', { foreignTable: 'time_slots' });
+                if (scheduleError) throw scheduleError;
+                setSchedule(scheduleData as any[] || []);
+
+                if (foundHomeroom) {
+                    const { data: attendanceData, error: attendanceError } = await supabase
+                        .from('student_attendance')
+                        .select('id')
+                        .eq('class_id', foundHomeroom.id)
+                        .eq('attendance_date', todayStr)
+                        .eq('school_id', fetchedSchoolId)
+                        .limit(1);
+                    if (attendanceError) throw attendanceError;
+                    setIsAttendanceTaken(attendanceData.length > 0);
+                }
+
+                if (fetchedSchoolId) {
+                    const { data: announcementData, error: announcementError } = await supabase
+                        .from('announcements')
+                        .select('*')
+                        .eq('school_id', fetchedSchoolId)
+                        .gte('expiry_date', todayStr)
+                        .order('created_at', { ascending: false })
+                        .limit(3);
+                    if (announcementError) throw announcementError;
+                    setAnnouncements(announcementData || []);
+                }
+
+                const { data: staffAttendanceData, error: staffAttendanceError } = await supabase
+                    .from('teacher_attendance')
+                    .select('*')
+                    .eq('teacher_id', teacherId)
+                    .eq('attendance_date', todayStr)
+                    .maybeSingle();
+                
+                if (staffAttendanceError) throw staffAttendanceError;
+                setStaffAttendance(staffAttendanceData);
+
+            } catch (error: any) {
+                console.error("Error fetching teacher dashboard data:", error);
+                setError(error.message || "Failed to load dashboard data.");
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchDashboardData();
+    }, [session.user.id, profile.school_id]);
+
+    const handleStaffCheckIn = async (bypassLocation = false) => {
+        if (!teacherId) {
+            alert("Teacher ID not found. Please refresh the page.");
+            return;
+        }
+        if (!schoolId) {
+            alert("School ID not found on your profile. Please contact an administrator.");
+            return;
+        }
+
+        setIsCheckingIn(true);
+        setLocationError(null);
+        try {
+            const today = new Date();
+            const todayStr = today.toISOString().split('T')[0];
+            const nowTime = today.toTimeString().split(' ')[0]; // HH:MM:SS
+
+            // Mandatory: Location verification if school location is set
+            if (!settings?.school_latitude || !settings?.school_longitude) {
+                setLocationError("School location has not been set by the Headteacher. Check-in is disabled until the school coordinates are configured in Settings.");
+                setIsCheckingIn(false);
+                return;
+            }
+
+            if (!bypassLocation) {
+                try {
+                    await verifyLocation(settings.school_latitude, settings.school_longitude, 500);
+                } catch (e: any) {
+                    setLocationError(e.message || "Location verification failed.");
+                    setIsCheckingIn(false);
+                    return;
+                }
+            }
+
+            const { data, error: insertError } = await supabase
+                .from('teacher_attendance')
+                .insert({
+                    teacher_id: teacherId,
+                    school_id: schoolId,
+                    attendance_date: todayStr,
+                    check_in_time: nowTime,
+                    status: 'Present'
+                })
+                .select()
+                .maybeSingle();
+
+            if (insertError) throw insertError;
+            if (data) {
+                setStaffAttendance(data);
+            } else {
+                // If maybeSingle returns null, it might be because of RLS or unique constraint
+                // Let's try to fetch it again just in case it was already created
+                const { data: existing } = await supabase
+                    .from('teacher_attendance')
+                    .select('*')
+                    .eq('teacher_id', teacherId)
+                    .eq('attendance_date', todayStr)
+                    .maybeSingle();
+                if (existing) setStaffAttendance(existing);
+            }
+        } catch (err: any) {
+            console.error("Check-in error:", err);
+            alert(err.message || "Failed to check in. Please try again.");
+        } finally {
+            setIsCheckingIn(false);
+        }
+    };
+
+    const handleStaffCheckOut = async (bypassLocation = false) => {
+        if (!staffAttendance) return;
+        setIsCheckingIn(true);
+        setLocationError(null);
+        try {
+            // Also verify location for check-out to be consistent
+            if (!settings?.school_latitude || !settings?.school_longitude) {
+                setLocationError("School location has not been set by the Headteacher. Check-out is disabled until the school coordinates are configured in Settings.");
+                setIsCheckingIn(false);
+                return;
+            }
+
+            if (!bypassLocation) {
+                try {
+                    await verifyLocation(settings.school_latitude, settings.school_longitude, 500);
+                } catch (e: any) {
+                    setLocationError("Check-out failed: " + (e.message || "Location verification failed."));
+                    setIsCheckingIn(false);
+                    return;
+                }
+            }
+
+            const nowTime = new Date().toTimeString().split(' ')[0];
+
+            const { data, error } = await supabase
+                .from('teacher_attendance')
+                .update({ check_out_time: nowTime })
+                .eq('id', staffAttendance.id)
+                .select()
+                .single();
+
+            if (error) throw error;
+            setStaffAttendance(data);
+        } catch (err: any) {
+            alert(err.message || "Failed to check out.");
+        } finally {
+            setIsCheckingIn(false);
+        }
+    };
+
+    if (isLoading) {
+        return <div className="flex items-center justify-center p-12 text-gray-500 dark:text-gray-400">Loading your dashboard...</div>;
+    }
+
+    if (error) {
+        return (
+            <div>
+                <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome, {profile.full_name}!</h1>
+                <div className="p-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg mt-6">
+                    <h3 className="text-lg font-semibold text-red-800 dark:text-red-300 mb-2">Account Setup Required</h3>
+                    <p className="text-red-700 dark:text-red-200">{error}</p>
+                    <p className="text-sm text-red-600 dark:text-red-400 mt-2">
+                        Your user account is created, but it is not linked to a teacher profile in the system. 
+                        Please ask the Headteacher to add a teacher with email <strong>{session.user.email}</strong>.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    const formatTime = (time: string) => {
+        if (!time) return '--:--';
+        try {
+            const date = new Date(`1970-01-01T${time.includes(':') ? time : '00:00'}${time.split(':').length === 2 ? ':00' : ''}Z`);
+            if (isNaN(date.getTime())) return time;
+            return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', timeZone: 'UTC' });
+        } catch (e) {
+            return time;
+        }
+    };
+
+    return (
+        <div>
+            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome, {profile.full_name}!</h1>
+            <p className="text-gray-600 dark:text-gray-300 mb-8">Here is your summary for today.</p>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 space-y-6">
+                    <Widget title="Quick Actions">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                           <QuickAction title="Take Attendance" icon={AttendanceIcon} onClick={() => setActivePage('Class Attendance')} />
+                           <QuickAction title="Record Assessments" icon={AcademicsIcon} onClick={() => setActivePage('Assessment')} />
+                           <QuickAction title="Top Up Balance" icon={BillingIcon} onClick={() => setActivePage('Billing')} />
+                           <QuickAction title="Messages" icon={MessagesIcon} onClick={() => setActivePage('Messages')} />
+                           <QuickAction 
+                                title={!staffAttendance ? "Check In" : (staffAttendance.check_out_time ? "Checked Out" : "Check Out")} 
+                                icon={Clock} 
+                                onClick={!staffAttendance ? () => handleStaffCheckIn() : (staffAttendance.check_out_time ? () => {} : () => handleStaffCheckOut())} 
+                           />
+                        </div>
+                    </Widget>
+
+                    <Widget title="Staff Attendance">
+                        <div className="space-y-4">
+                            {(!settings?.school_latitude || !settings?.school_longitude) && (
+                                <div className="p-3 bg-red-50 dark:bg-red-900/20 border-l-4 border-red-500 text-red-700 dark:text-red-200 text-xs flex items-start gap-2">
+                                    <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                                    <p>School location not set. Physical presence verification is required. Ask the Headteacher to set the school coordinates in Settings before you can check in.</p>
+                                </div>
+                            )}
+                            {locationError && (
+                                <div className="p-4 bg-red-50 dark:bg-red-900/20 border-l-4 border-red-500 rounded-r-lg mb-4">
+                                    <div className="flex items-start gap-3">
+                                        <div className="p-1 bg-red-100 dark:bg-red-800 rounded-full">
+                                            <MapPin className="w-4 h-4 text-red-600 dark:text-red-400" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="text-sm font-bold text-red-800 dark:text-red-300">Location Error</p>
+                                            <p className="text-xs text-red-700 dark:text-red-400 mt-1">{locationError}</p>
+                                            
+                                            {locationError.includes("denied") ? (
+                                                <div className="mt-3 p-3 bg-white/50 dark:bg-black/20 rounded border border-red-200 dark:border-red-800">
+                                                    <p className="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider mb-2">How to fix:</p>
+                                                    <ul className="text-[11px] space-y-2 text-gray-700 dark:text-gray-300 list-disc pl-4">
+                                                        <li><strong>Chrome:</strong> Click the <span className="font-mono bg-gray-200 dark:bg-gray-700 px-1 rounded">lock icon</span> in the address bar and set Location to <span className="font-bold text-green-600">Allow</span>.</li>
+                                                        <li><strong>Safari (iPhone):</strong> Go to Settings &gt; Privacy &gt; Location Services &gt; Safari &gt; <span className="font-bold text-green-600">While Using the App</span>.</li>
+                                                        <li><strong>Android:</strong> Pull down notification bar &gt; Enable <span className="font-bold text-green-600">Location/GPS</span>.</li>
+                                                    </ul>
+                                                </div>
+                                            ) : (
+                                                <div className="mt-3 p-3 bg-white/50 dark:bg-black/20 rounded border border-red-200 dark:border-red-800">
+                                                    <p className="text-[11px] font-bold text-gray-800 dark:text-gray-200 uppercase tracking-wider mb-2">Troubleshooting:</p>
+                                                    <ul className="text-[11px] space-y-2 text-gray-700 dark:text-gray-300 list-disc pl-4">
+                                                        <li><strong>Move:</strong> If you are indoors, try moving closer to a window or going outside for a moment.</li>
+                                                        <li><strong>Refresh:</strong> Sometimes the browser's location service gets stuck. Try refreshing the page or restarting your browser.</li>
+                                                        <li><strong>Check Settings:</strong> Double-check that your device's global GPS/Location is actually toggled <strong>ON</strong>.</li>
+                                                        <li><strong>Try Another Browser:</strong> If you are on Chrome, try Safari or Firefox (or vice versa).</li>
+                                                    </ul>
+                                                </div>
+                                            )}
+                                            <button 
+                                                onClick={() => setLocationError(null)}
+                                                className="mt-3 text-[10px] font-bold text-brand-600 hover:underline uppercase mr-4"
+                                            >
+                                                Dismiss and try again
+                                            </button>
+                                            <button 
+                                                onClick={() => !staffAttendance ? handleStaffCheckIn(true) : handleStaffCheckOut(true)}
+                                                className="mt-3 text-[10px] font-bold text-orange-600 hover:underline uppercase"
+                                            >
+                                                Bypass Location Check (Dev Only)
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                            {!staffAttendance ? (
+                                <div className="text-center py-4 bg-brand-50 dark:bg-brand-900/10 rounded-xl border border-dashed border-brand-200 dark:border-brand-800">
+                                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-4 font-medium">You haven't checked in yet today.</p>
+                                    <button 
+                                        onClick={() => handleStaffCheckIn()}
+                                        disabled={isCheckingIn || !settings?.school_latitude || !settings?.school_longitude}
+                                        className="inline-flex items-center justify-center gap-2 py-3 px-8 bg-brand-600 hover:bg-brand-700 text-white rounded-xl font-bold shadow-lg shadow-brand-600/20 transition-all active:scale-95 disabled:opacity-50"
+                                    >
+                                        <LogIn className="w-5 h-5" />
+                                        {isCheckingIn ? 'Checking in...' : 'Check In Now'}
+                                    </button>
+                                    <p className="mt-4 text-[10px] text-gray-500 dark:text-gray-300 px-4">
+                                        Note: Physical presence verification is required. If you get a location error, please ensure GPS is enabled on your device and you have granted location permissions to your browser.
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="flex items-center justify-between p-4 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-100 dark:border-green-800">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-800 flex items-center justify-center">
+                                                <Clock className="w-5 h-5 text-green-600 dark:text-green-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] text-green-600 dark:text-green-400 font-bold uppercase tracking-wider">Checked In</p>
+                                                <p className="text-xl font-black text-gray-900 dark:text-white leading-none mt-1">{formatTime(staffAttendance.check_in_time)}</p>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="px-3 py-1 text-[10px] font-black bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 rounded-full uppercase">
+                                                {staffAttendance.status}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {staffAttendance.check_out_time ? (
+                                        <div className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                            <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                                                <LogOut className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                                            </div>
+                                            <div>
+                                                <p className="text-[10px] text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">Checked Out</p>
+                                                <p className="text-xl font-black text-gray-900 dark:text-white leading-none mt-1">{formatTime(staffAttendance.check_out_time)}</p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <button 
+                                            onClick={() => handleStaffCheckOut()}
+                                            disabled={isCheckingIn || !settings?.school_latitude || !settings?.school_longitude}
+                                            className="flex items-center justify-center gap-2 py-4 px-4 border-2 border-brand-600 text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-900/20 rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50"
+                                        >
+                                            <LogOut className="w-5 h-5" />
+                                            {isCheckingIn ? 'Checking out...' : 'Check Out Now'}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </Widget>
+                    <Widget title="Today's Schedule">
+                        {schedule.length > 0 ? (
+                            <ul className="space-y-3">
+                                {schedule.map(entry => (
+                                    <li key={entry.id} className="flex items-center space-x-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-md">
+                                        <div className="text-center w-24 flex-shrink-0">
+                                            <p className="font-semibold text-brand-600 dark:text-brand-400">{formatTime(entry.time_slot?.start_time || '')}</p>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">to {formatTime(entry.time_slot?.end_time || '')}</p>
+                                        </div>
+                                        <div className="border-l-2 border-brand-200 dark:border-brand-700 pl-4">
+                                            <p className="font-bold text-gray-800 dark:text-white">{entry.subject?.name || 'Break'}</p>
+                                            <p className="text-sm text-gray-600 dark:text-gray-200">{(entry as any).class?.name || 'Unknown Class'}</p>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <p className="text-gray-500 dark:text-gray-400">You have no classes scheduled for today.</p>
+                        )}
+                    </Widget>
+                </div>
+                <div className="space-y-6">
+                    {homeroomClass && (
+                        <Widget title="Homeroom Attendance">
+                            {isAttendanceTaken ? (
+                                <div className="text-center">
+                                    <div className="mx-auto w-16 h-16 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center mb-3">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                    <p className="font-semibold text-green-700 dark:text-green-300">Attendance for {homeroomClass.name} has been taken today.</p>
+                                    <button onClick={() => setActivePage('Class Attendance')} className="mt-3 text-sm font-medium text-brand-600 hover:underline">View/Edit</button>
+                                </div>
+                            ) : (
+                                <div className="text-center">
+                                    <p className="mb-4 text-gray-600 dark:text-gray-300">Attendance for <span className="font-bold">{homeroomClass.name}</span> has not been taken.</p>
+                                    <button onClick={() => setActivePage('Class Attendance')} className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-brand-600 hover:bg-brand-700">
+                                        Take Attendance Now
+                                    </button>
+                                </div>
+                            )}
+                        </Widget>
+                    )}
+                    <Widget title="School Announcements">
+                         {announcements.length > 0 ? (
+                             <ul className="space-y-3">
+                                {announcements.map(ann => (
+                                    <li key={ann.id} className="p-3 bg-blue-50 dark:bg-blue-900/30 rounded-md">
+                                        <p className="text-sm text-blue-800 dark:text-blue-200">{ann.message}</p>
+                                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Expires: {new Date(ann.expiry_date).toLocaleDateString()}</p>
+                                    </li>
+                                ))}
+                            </ul>
+                         ) : (
+                            <p className="text-gray-500 dark:text-gray-400">No active announcements.</p>
+                         )}
+                    </Widget>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default TeacherDashboardHome;

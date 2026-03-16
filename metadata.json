@@ -1,0 +1,7 @@
+{
+  "name": "SmartSchool",
+  "description": "A modern school management system for Headteachers, Teachers, Students, and Parents. This initial version sets up the authentication pages for different user roles.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
