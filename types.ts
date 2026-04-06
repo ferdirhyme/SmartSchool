@@ -148,7 +148,8 @@ export type ReportType =
   | 'FeeDefaulters'
   | 'PaymentHistory'
   | 'ClassList'
-  | 'AttendanceReport';
+  | 'AttendanceReport'
+  | 'TeacherAttendanceReport';
 
 export interface TimeSlot {
     id: string;

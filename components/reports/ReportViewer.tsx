@@ -11,6 +11,7 @@ import { ClassListReport } from './ClassList.tsx';
 import { AttendanceReport } from './AttendanceReport.tsx';
 import { StudentAttendanceReport } from './StudentAttendanceReport.tsx';
 import { StudentProgressReport } from './StudentProgressReport.tsx';
+import { TeacherAttendanceReport } from './TeacherAttendanceReport.tsx';
 import { Session } from '@supabase/supabase-js';
 
 interface ReportViewerProps {
@@ -30,6 +31,7 @@ const reportTitles: Record<ReportType, string> = {
     AttendanceReport: 'Class Attendance Report',
     StudentAttendanceReport: 'Individual Student Attendance Report',
     StudentProgressReport: 'Student Progress Report',
+    TeacherAttendanceReport: 'Teacher Attendance Report',
 };
 
 const REPORT_COST = 1.00;
@@ -105,6 +107,11 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                     const { data: feeTypeData } = await supabase.from('fee_types').select('*').order('name');
                     if (mounted) setFeeTypes(feeTypeData || []);
                 }
+                
+                if (reportType === 'TeacherAttendanceReport') {
+                    const { data: teacherData } = await supabase.from('teachers').select('*').order('full_name');
+                    if (mounted) setTeachers(teacherData || []);
+                }
             } catch (err: any) {
                 console.error(err);
                 if (mounted) setError(err.message || 'Failed to load filters');
@@ -176,6 +183,10 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
             case 'StudentAttendanceReport':
                 if (!filters.class_id) missing.push('Class');
                 if (!filters.student_id) missing.push('Student');
+                if (!filters.startDate) missing.push('Start Date');
+                if (!filters.endDate) missing.push('End Date');
+                break;
+            case 'TeacherAttendanceReport':
                 if (!filters.startDate) missing.push('Start Date');
                 if (!filters.endDate) missing.push('End Date');
                 break;
@@ -347,6 +358,27 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                         .order('attendance_date');
                     if (recordsError) throw recordsError;
                     data = { student, records, startDate: filters.startDate, endDate: filters.endDate };
+                    break;
+                }
+                case 'TeacherAttendanceReport': {
+                    let teachersQuery = supabase.from('teachers').select('*').order('full_name');
+                    if (filters.teacher_id) {
+                        teachersQuery = teachersQuery.eq('id', filters.teacher_id);
+                    }
+                    const { data: teachers, error: teachersError } = await teachersQuery;
+                    if (teachersError) throw teachersError;
+
+                    let recordsQuery = supabase.from('teacher_attendance')
+                        .select('*, teacher:teachers(full_name)')
+                        .gte('attendance_date', filters.startDate)
+                        .lte('attendance_date', filters.endDate);
+                    if (filters.teacher_id) {
+                        recordsQuery = recordsQuery.eq('teacher_id', filters.teacher_id);
+                    }
+                    const { data: records, error: recordsError } = await recordsQuery;
+                    if (recordsError) throw recordsError;
+
+                    data = { teachers, records, startDate: filters.startDate, endDate: filters.endDate };
                     break;
                 }
             }
@@ -527,7 +559,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                     </div>
                 ) : null}
 
-                 {(reportType === 'AttendanceReport' || reportType === 'StudentAttendanceReport') && (
+                 {(reportType === 'AttendanceReport' || reportType === 'StudentAttendanceReport' || reportType === 'TeacherAttendanceReport') && (
                     <>
                         <div>
                             <label className="block text-sm">Start Date</label>
@@ -538,6 +570,15 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                             <input type="date" value={filters.endDate || ''} onChange={e => setFilters({ ...filters, endDate: e.target.value })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
                         </div>
                     </>
+                )}
+                {reportType === 'TeacherAttendanceReport' && (
+                    <div>
+                        <label className="block text-sm">Teacher (Optional)</label>
+                        <select value={filters.teacher_id || ''} onChange={e => setFilters({ ...filters, teacher_id: e.target.value })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                            <option value="">All Teachers</option>
+                            {teachers.map(t => <option key={t.id} value={t.id}>{t.full_name}</option>)}
+                        </select>
+                    </div>
                 )}
                 {reportType === 'ClassPerformance' && (
                     <div>
@@ -627,6 +668,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                 {reportType === 'ClassList' && <ClassListReport data={reportData} />}
                 {reportType === 'AttendanceReport' && <AttendanceReport data={reportData} filters={filters} />}
                 {reportType === 'StudentAttendanceReport' && <StudentAttendanceReport data={reportData} />}
+                {reportType === 'TeacherAttendanceReport' && <TeacherAttendanceReport data={reportData} />}
             </>
         );
     };

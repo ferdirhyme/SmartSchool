@@ -77,7 +77,7 @@ export const TeacherAttendanceReport: React.FC<{ data: ReportData }> = ({ data }
                                             }
                                             return (
                                                 <td key={dateString} className={`border p-1 text-center ${checkInTime ? 'bg-green-100' : 'bg-red-100'}`}>
-                                                    {checkInTime ? new Date(checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Absent'}
+                                                    {checkInTime ? new Date(`1970-01-01T${checkInTime}`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Absent'}
                                                 </td>
                                             );
                                         })}

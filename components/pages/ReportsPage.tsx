@@ -14,6 +14,7 @@ const allReportOptions = [
     { type: 'PaymentHistory' as ReportType, title: 'Student Payment History', description: 'View a detailed payment ledger for a specific student.', icon: FeesIcon },
     { type: 'ClassList' as ReportType, title: 'Class List / Roster', description: 'Generate a printable list of all students in a class.', icon: StudentsIcon },
     { type: 'AttendanceReport' as ReportType, title: 'Class Attendance Report', description: 'Generate a student attendance summary for a class over a date range.', icon: AttendanceIcon },
+    { type: 'TeacherAttendanceReport' as ReportType, title: 'Teacher Attendance Report', description: 'Generate an attendance summary for teachers over a date range.', icon: TeachersIcon },
 ];
 
 interface ReportCardProps {

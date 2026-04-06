@@ -2,6 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import AuthPage from './components/AuthPage.tsx';
 import SignupPage from './components/SignupPage.tsx';
+import ForgotPassword from './components/ForgotPassword.tsx';
+import ResetPassword from './components/ResetPassword.tsx';
 import { supabase } from './lib/supabase.ts';
 import { Session } from '@supabase/supabase-js';
 import { Profile, UserRole } from './types.ts';
@@ -17,7 +19,7 @@ const App: React.FC = () => {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<'login' | 'signup'>('login');
+  const [view, setView] = useState<'login' | 'signup' | 'forgot-password' | 'reset-password'>('login');
 
   const lastSessionUserId = React.useRef<string | null>(null);
   const loadingTimeoutRef = React.useRef<any>(null);
@@ -73,6 +75,10 @@ const App: React.FC = () => {
 
     // Global Auth listener - only set up once
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setView('reset-password');
+      }
+
       const currentUserId = session?.user.id || null;
       
       // Only trigger updates if the user ID actually changed or session was lost
@@ -135,9 +141,21 @@ const App: React.FC = () => {
     );
   }
 
+  // If the user is resetting their password, show the ResetPassword component
+  // regardless of whether they are fully logged in yet.
+  if (view === 'reset-password') {
+    return <ResetPassword onComplete={() => setView('login')} />;
+  }
+
   if (!session || !profile) {
+    if (view === 'forgot-password') {
+      return <ForgotPassword onNavigateToLogin={() => setView('login')} />;
+    }
     return view === 'login' ? (
-      <AuthPage onNavigateToSignup={() => setView('signup')} />
+      <AuthPage 
+        onNavigateToSignup={() => setView('signup')} 
+        onNavigateToForgotPassword={() => setView('forgot-password')} 
+      />
     ) : (
       <SignupPage onNavigateToLogin={() => setView('login')} />
     );

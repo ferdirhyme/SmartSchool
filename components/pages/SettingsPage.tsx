@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase.ts';
 import { useSettings } from '../../contexts/SettingsContext.tsx';
 import { SchoolSettings, Profile, UserRole } from '../../types.ts';
 import ImageUpload from '../common/ImageUpload.tsx';
+import { getCurrentLocation } from '../../lib/location.ts';
 
 // --- SQL Scripts for Advanced Section ---
 const assessmentSqlScript = `
@@ -1168,6 +1169,7 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
     const [isSaving, setIsSaving] = useState(false);
     const [isFetchingLocation, setIsFetchingLocation] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const [locationMessage, setLocationMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const [showSecret, setShowSecret] = useState(false);
     const [isLocalLoading, setIsLocalLoading] = useState(false);
 
@@ -1214,51 +1216,56 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
         setFormData(prev => ({ ...prev, [name]: isNumberInput ? (value === '' ? null : parseFloat(value)) : value }));
     };
     
-    const handleFetchLocation = () => {
+    const handleFetchLocation = async () => {
       if (!navigator.geolocation) {
-        setMessage({ type: 'error', text: 'Geolocation is not supported by your browser.' });
+        setLocationMessage({ type: 'error', text: 'Geolocation is not supported by your browser.' });
         return;
       }
 
-      setIsFetchingLocation(true);
-      setMessage(null);
-
-      const options = {
-        enableHighAccuracy: false,
-        timeout: 20000, // Increased to 20 seconds
-        maximumAge: 60000 // Allow cached positions up to 1 minute old
-      };
-
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude } = position.coords;
-          setFormData(prev => ({
-            ...prev,
-            school_latitude: latitude,
-            school_longitude: longitude,
-          }));
-          setIsFetchingLocation(false);
-          setMessage({ type: 'success', text: `Location fetched: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}` });
-          setTimeout(() => setMessage(null), 5000);
-        },
-        (error) => {
-          let errorText = 'Could not get your location.';
-          switch (error.code) {
-            case error.PERMISSION_DENIED:
-              errorText = 'Location access denied. Please check your browser address bar for a blocked location icon and set it to "Allow".';
-              break;
-            case error.POSITION_UNAVAILABLE:
-              errorText = 'Location information is unavailable. Ensure your device GPS is on or try using a different browser/device.';
-              break;
-            case error.TIMEOUT:
-              errorText = 'The request timed out. This often happens if the browser permission prompt is ignored or if the signal is weak. Please try again or enter coordinates manually.';
-              break;
+      // Check permission status if possible (not supported in all browsers like Safari)
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const status = await navigator.permissions.query({ name: 'geolocation' as PermissionName });
+          if (status.state === 'denied') {
+            setLocationMessage({ 
+              type: 'error', 
+              text: 'Location access is blocked in your browser settings. Please click the lock icon in the address bar and set Location to "Allow".' 
+            });
+            return;
           }
-          setMessage({ type: 'error', text: `${errorText} (System Error: ${error.message})` });
-          setIsFetchingLocation(false);
-        },
-        options
-      );
+        } catch (e) {
+          // Ignore permission query errors
+        }
+      }
+
+      setIsFetchingLocation(true);
+      setLocationMessage({ type: 'success', text: 'Requesting location... Please check for a permission prompt in your browser.' });
+
+      try {
+        const position = await getCurrentLocation();
+        const { latitude, longitude } = position.coords;
+        setFormData(prev => ({
+          ...prev,
+          school_latitude: latitude,
+          school_longitude: longitude,
+        }));
+        setLocationMessage({ type: 'success', text: `Successfully fetched location: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}` });
+        // Keep success message for 10 seconds
+        setTimeout(() => setLocationMessage(null), 10000);
+      } catch (error: any) {
+        let errorText = error.message || 'Could not get your location.';
+        
+        // Map common error codes to user-friendly messages if they aren't already descriptive
+        if (error.code === 1) {
+            errorText = 'Location access denied. Please allow location access in your browser settings (usually in the address bar).';
+        } else if (error.code === 3) {
+            errorText = 'Location request timed out. This can happen indoors or in areas with poor signal. Please try again or enter coordinates manually.';
+        }
+
+        setLocationMessage({ type: 'error', text: errorText });
+      } finally {
+        setIsFetchingLocation(false);
+      }
     };
 
     const handleSave = async (e: FormEvent) => {
@@ -1394,6 +1401,11 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
                                     )}
                                     {isFetchingLocation ? 'Fetching...' : 'Use My Current Location'}
                                 </button>
+                                {locationMessage && (
+                                    <div className={`mt-2 p-3 rounded-md text-sm ${locationMessage.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+                                        {locationMessage.text}
+                                    </div>
+                                )}
                                 <p className="text-[11px] text-gray-500 italic">
                                     Tip: If the button times out, you can find your coordinates on Google Maps and enter them manually below.
                                 </p>

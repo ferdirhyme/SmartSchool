@@ -32,9 +32,10 @@ const roleConfig = {
 
 interface AuthPageProps {
   onNavigateToSignup: () => void;
+  onNavigateToForgotPassword: () => void;
 }
 
-const AuthPage: React.FC<AuthPageProps> = ({ onNavigateToSignup }) => {
+const AuthPage: React.FC<AuthPageProps> = ({ onNavigateToSignup, onNavigateToForgotPassword }) => {
   const [activeRole, setActiveRole] = useState<UserRole>(UserRole.Teacher);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -187,9 +188,13 @@ const AuthPage: React.FC<AuthPageProps> = ({ onNavigateToSignup }) => {
                         Sign up
                     </button>
                 </p>
-                <a href="#" className="font-medium text-gray-500 hover:text-gray-400">
+                <button
+                    type="button"
+                    onClick={onNavigateToForgotPassword}
+                    className="font-medium text-gray-500 hover:text-gray-400 focus:outline-none"
+                >
                     Forgot your password?
-                </a>
+                </button>
               </div>
             </div>
         </div>

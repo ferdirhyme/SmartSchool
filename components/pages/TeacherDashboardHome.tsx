@@ -148,8 +148,22 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
             const todayStr = today.toISOString().split('T')[0];
             const nowTime = today.toTimeString().split(' ')[0]; // HH:MM:SS
 
+            // Fetch latest school settings to ensure we have the most up-to-date coordinates
+            const { data: latestSettings, error: settingsError } = await supabase
+                .from('school_settings')
+                .select('school_latitude, school_longitude')
+                .eq('id', schoolId)
+                .single();
+
+            if (settingsError) {
+                console.error("Error fetching school settings:", settingsError);
+            }
+
+            const lat = latestSettings?.school_latitude || settings?.school_latitude;
+            const lng = latestSettings?.school_longitude || settings?.school_longitude;
+
             // Mandatory: Location verification if school location is set
-            if (!settings?.school_latitude || !settings?.school_longitude) {
+            if (!lat || !lng) {
                 setLocationError("School location has not been set by the Headteacher. Check-in is disabled until the school coordinates are configured in Settings.");
                 setIsCheckingIn(false);
                 return;
@@ -157,7 +171,7 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
 
             if (!bypassLocation) {
                 try {
-                    await verifyLocation(settings.school_latitude, settings.school_longitude, 500);
+                    await verifyLocation(lat, lng, 500);
                 } catch (e: any) {
                     setLocationError(e.message || "Location verification failed.");
                     setIsCheckingIn(false);
@@ -204,8 +218,22 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
         setIsCheckingIn(true);
         setLocationError(null);
         try {
+            // Fetch latest school settings to ensure we have the most up-to-date coordinates
+            const { data: latestSettings, error: settingsError } = await supabase
+                .from('school_settings')
+                .select('school_latitude, school_longitude')
+                .eq('id', schoolId)
+                .single();
+
+            if (settingsError) {
+                console.error("Error fetching school settings:", settingsError);
+            }
+
+            const lat = latestSettings?.school_latitude || settings?.school_latitude;
+            const lng = latestSettings?.school_longitude || settings?.school_longitude;
+
             // Also verify location for check-out to be consistent
-            if (!settings?.school_latitude || !settings?.school_longitude) {
+            if (!lat || !lng) {
                 setLocationError("School location has not been set by the Headteacher. Check-out is disabled until the school coordinates are configured in Settings.");
                 setIsCheckingIn(false);
                 return;
@@ -213,7 +241,7 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
 
             if (!bypassLocation) {
                 try {
-                    await verifyLocation(settings.school_latitude, settings.school_longitude, 500);
+                    await verifyLocation(lat, lng, 500);
                 } catch (e: any) {
                     setLocationError("Check-out failed: " + (e.message || "Location verification failed."));
                     setIsCheckingIn(false);
