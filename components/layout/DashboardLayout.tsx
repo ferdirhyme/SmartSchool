@@ -81,7 +81,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, ac
     <div className="flex flex-col h-full">
       <div className="p-6 border-b border-white/10 flex items-center gap-3">
         <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center shadow-inner shrink-0 overflow-hidden">
-          {(settings?.logo_url || school?.logo_url) ? (
+          {((settings?.logo_url || school?.logo_url) && profile.school_id && (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher)) ? (
             <img 
               src={settings?.logo_url || school?.logo_url || ''} 
               className="w-full h-full object-contain p-1" 
@@ -93,9 +93,15 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, ac
           )}
         </div>
         <div className="overflow-hidden">
-          <h2 className="font-bold truncate text-sm">{settings?.school_name || school?.name || (profile.role === UserRole.Admin ? 'Platform Admin' : 'SmartSchool')}</h2>
+          <h2 className="font-bold truncate text-sm">
+            {(profile.school_id && (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher)) 
+              ? (settings?.school_name || school?.name || 'SmartSchool') 
+              : (profile.role === UserRole.Admin ? 'Platform Admin' : (profile.role === UserRole.Parent ? 'Parent Portal' : (profile.role === UserRole.Student ? 'Student Portal' : 'SmartSchool')))}
+          </h2>
           <span className="text-[10px] uppercase font-bold tracking-widest text-brand-400 block mt-0.5">
-              {school ? (school.plan_id?.replace(/_/g, ' ') || 'Standard Edition') : (profile.role === UserRole.Admin ? 'Superuser' : 'Pending Setup')}
+              {(profile.school_id && (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher))
+                ? (school?.plan_id?.replace(/_/g, ' ') || 'Standard Edition') 
+                : (profile.role === UserRole.Admin ? 'Superuser' : (profile.role === UserRole.Parent ? 'Guardian' : (profile.role === UserRole.Student ? 'Learner' : 'Pending Setup')))}
           </span>
         </div>
         <button 
@@ -190,7 +196,7 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, ac
               >
                 <Menu className="w-6 h-6" />
               </button>
-              {(settings?.logo_url || school?.logo_url) && (
+              {((settings?.logo_url || school?.logo_url) && profile.school_id && (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher)) && (
                 <img 
                   src={settings?.logo_url || school?.logo_url || ''} 
                   alt="School Logo" 
