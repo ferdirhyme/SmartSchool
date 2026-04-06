@@ -27,7 +27,11 @@ const AnnouncementBanner: React.FC = () => {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Error fetching announcements:', error);
+        if (error.message === 'TypeError: Failed to fetch' || error.message === 'Failed to fetch') {
+          console.warn('Announcements fetch blocked (likely by an adblocker).');
+        } else {
+          console.error('Error fetching announcements:', error);
+        }
       } else {
         setAnnouncements(data || []);
       }

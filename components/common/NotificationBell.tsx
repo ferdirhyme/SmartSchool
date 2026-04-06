@@ -75,7 +75,11 @@ export const NotificationBell: React.FC<NotificationBellProps> = ({
             .limit(20);
 
         if (error) {
-            console.error('Error fetching notifications:', error);
+            if (error.message === 'TypeError: Failed to fetch' || error.message === 'Failed to fetch') {
+                console.warn('Notifications fetch blocked (likely by an adblocker).');
+            } else {
+                console.error('Error fetching notifications:', error);
+            }
         } else {
             setNotifications(data || []);
             setUnreadCount(data?.filter(n => !n.is_read).length || 0);
