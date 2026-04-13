@@ -1,7 +1,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { supabase } from '../lib/supabase.ts';
-import { School, SchoolSettings } from '../types.ts';
+import { School, SchoolSettings, Profile } from '../types.ts';
 import { Session } from '@supabase/supabase-js';
 
 type Theme = 'light' | 'dark';
@@ -34,7 +34,7 @@ const defaultSettings: SchoolSettings = {
 };
 
 
-export const SettingsProvider: React.FC<{ children: ReactNode; session: Session | null }> = ({ children, session }) => {
+export const SettingsProvider: React.FC<{ children: ReactNode; session: Session | null; profile: Profile | null }> = ({ children, session, profile: profileProp }) => {
   const [settings, setSettings] = useState<SchoolSettings | null>(null);
   const [school, setSchool] = useState<School | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -62,16 +62,38 @@ export const SettingsProvider: React.FC<{ children: ReactNode; session: Session 
     let loadedSchool: School | null = null;
 
     try {
-      // First, get the user's profile to find their school_id
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('school_id, role, admission_numbers')
-        .eq('id', userId)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
+      // Use profile from props if available, otherwise fetch it
+      let profile = profileProp;
+      
+      if (!profile || profile.id !== userId) {
+        const { data: fetchedProfile, error: profileError } = await supabase
+          .from('profiles')
+          .select('school_id, role, admission_numbers')
+          .eq('id', userId)
+          .maybeSingle();
+        
+        if (!profileError && fetchedProfile) {
+          profile = fetchedProfile as any;
+        }
+      }
 
       let effectiveSchoolId = profile?.school_id;
+
+      // If Teacher or Headteacher has no school_id, try to find it from teachers table
+      if (!effectiveSchoolId && (profile?.role === 'Teacher' || profile?.role === 'Headteacher')) {
+        const { data: teacherRecord, error: teacherError } = await supabase
+          .from('teachers')
+          .select('school_id')
+          .ilike('email', session.user.email || '')
+          .limit(1)
+          .maybeSingle();
+          
+        if (!teacherError && teacherRecord?.school_id) {
+          effectiveSchoolId = teacherRecord.school_id;
+          // Update the profile to save this school_id for future use
+          await supabase.from('profiles').update({ school_id: effectiveSchoolId }).eq('id', userId);
+        }
+      }
 
       // If Parent has no school_id, try to find it from their wards
       const admissionNumbers = profile?.admission_numbers || [];
@@ -131,7 +153,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode; session: Session 
       setThemeState(defaultSettings.theme);
       setIsLoading(false);
     }
-  }, [session?.user.id]);
+  }, [session?.user.id, profileProp?.school_id]);
 
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);

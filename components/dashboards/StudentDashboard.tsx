@@ -10,6 +10,7 @@ import StudentDashboardHome from '../pages/StudentDashboardHome.tsx';
 import ReportsPage from '../pages/ReportsPage.tsx';
 import MessagesPage from '../pages/MessagesPage.tsx';
 import { ReportViewer } from '../reports/ReportViewer.tsx';
+import FeedbackPage from '../pages/FeedbackPage.tsx';
 
 interface DashboardProps {
   session: Session;
@@ -38,6 +39,8 @@ const StudentDashboard: React.FC<DashboardProps> = ({ session, profile }) => {
         return <ReportsPage session={session} profile={profile} onReportSelect={setSelectedReport} />;
       case 'Messages':
         return <MessagesPage session={session} profile={profile} initialConversationId={typeof activePage === 'object' ? activePage.conversationId : undefined} />;
+      case 'Feedback':
+        return <FeedbackPage session={session} profile={profile} />;
       case 'Settings':
         return <SettingsPage profile={profile} />;
       default:

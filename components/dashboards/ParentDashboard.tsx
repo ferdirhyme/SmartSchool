@@ -10,6 +10,7 @@ import ParentDashboardHome from '../pages/ParentDashboardHome.tsx';
 import ReportsPage from '../pages/ReportsPage.tsx';
 import BillingPage from '../pages/BillingPage.tsx';
 import { ReportViewer } from '../reports/ReportViewer.tsx';
+import FeedbackPage from '../pages/FeedbackPage.tsx';
 
 interface DashboardProps {
   session: Session;
@@ -41,6 +42,8 @@ const ParentDashboard: React.FC<DashboardProps> = ({ session, profile }) => {
         return <BillingPage session={session} />;
       case 'Profile':
         return <ProfilePage session={session} profile={profile} />;
+      case 'Feedback':
+        return <FeedbackPage session={session} profile={profile} />;
       case 'Settings':
         return <SettingsPage profile={profile} />;
       default:

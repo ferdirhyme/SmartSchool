@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 );
 
 -- Ensure columns exist in profiles
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS school_id UUID REFERENCES schools(id);
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS admission_numbers TEXT[];
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS credit_balance DECIMAL(12,2) DEFAULT 0.00;
@@ -279,15 +280,42 @@ CREATE TABLE IF NOT EXISTS messages (
 -- 24. Auth Trigger
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  assigned_role text;
 BEGIN
-  INSERT INTO public.profiles (id, full_name, role, is_onboarded)
+  -- 1. Determine Role Securely (Using text to avoid enum caching issues in persistent connections)
+  IF new.email = 'ferditgh@gmail.com' THEN
+    assigned_role := 'Admin';
+  ELSE
+    assigned_role := COALESCE(new.raw_user_meta_data->>'role', 'Teacher');
+  END IF;
+
+  -- 2. Create Profile (If this fails, the whole signup rolls back)
+  INSERT INTO public.profiles (id, full_name, email, role, is_onboarded)
   VALUES (
     new.id, 
     COALESCE(new.raw_user_meta_data->>'full_name', 'New User'), 
-    (COALESCE(new.raw_user_meta_data->>'role', 'Teacher'))::user_role, 
+    new.email,
+    assigned_role, 
     FALSE
   )
-  ON CONFLICT (id) DO NOTHING;
+  ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email;
+
+  -- 3. Auto-populate teachers table if applicable
+  IF assigned_role IN ('Teacher', 'Headteacher') THEN
+    INSERT INTO public.teachers (full_name, email, staff_id)
+    VALUES (
+      COALESCE(new.raw_user_meta_data->>'full_name', 'New User'),
+      new.email,
+      CASE 
+        WHEN new.raw_user_meta_data->>'staff_id' IS NULL OR new.raw_user_meta_data->>'staff_id' = '' 
+        THEN 'STAFF-' || substr(md5(new.id::text), 1, 8)
+        ELSE new.raw_user_meta_data->>'staff_id'
+      END
+    )
+    ON CONFLICT (staff_id) DO NOTHING;
+  END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -318,24 +346,63 @@ BEGIN
     END LOOP;
 END $$;
 
+-- Helper function to get school ID without triggering RLS recursion
+CREATE OR REPLACE FUNCTION get_my_school_id()
+RETURNS UUID AS $$
+  SELECT school_id FROM profiles WHERE id = auth.uid();
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- Helper function to check if user is Admin
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles 
+    WHERE id = auth.uid() AND role = 'Admin'
+  );
+$$ LANGUAGE sql SECURITY DEFINER;
+
 -- Recreate Policies
 CREATE POLICY "Users can view data from their school" ON classes
-    FOR SELECT USING (school_id IN (SELECT school_id FROM profiles WHERE id = auth.uid()));
+    FOR SELECT USING (school_id = get_my_school_id() OR public.is_admin());
 
 CREATE POLICY "Users can view data from their school" ON subjects
-    FOR SELECT USING (school_id IN (SELECT school_id FROM profiles WHERE id = auth.uid()));
+    FOR SELECT USING (school_id = get_my_school_id() OR public.is_admin());
 
 CREATE POLICY "Users can view data from their school" ON students
-    FOR SELECT USING (school_id IN (SELECT school_id FROM profiles WHERE id = auth.uid()));
+    FOR SELECT USING (school_id = get_my_school_id() OR public.is_admin());
 
 CREATE POLICY "Users can view data from their school" ON teachers
-    FOR SELECT USING (school_id IN (SELECT school_id FROM profiles WHERE id = auth.uid()));
+    FOR SELECT USING (school_id = get_my_school_id() OR public.is_admin());
+
+CREATE POLICY "Admins can update all teachers" ON teachers
+    FOR UPDATE USING (public.is_admin());
 
 CREATE POLICY "Users can view own profile" ON profiles
     FOR ALL USING (auth.uid() = id);
 
 CREATE POLICY "Users can view profiles in their school" ON profiles
-    FOR SELECT USING (school_id = (SELECT school_id FROM profiles WHERE id = auth.uid()));
+    FOR SELECT USING (school_id = get_my_school_id());
+
+CREATE POLICY "Admins can view all profiles" ON profiles
+    FOR SELECT USING (public.is_admin());
+
+CREATE POLICY "Admins can update all profiles" ON profiles
+    FOR UPDATE USING (public.is_admin());
+
+CREATE POLICY "Admins can delete all profiles" ON profiles
+    FOR DELETE USING (public.is_admin());
+
+CREATE POLICY "Anyone can view schools" ON schools
+    FOR SELECT USING (true);
+
+CREATE POLICY "Admins can insert schools" ON schools
+    FOR INSERT WITH CHECK (public.is_admin());
+
+CREATE POLICY "Admins can update schools" ON schools
+    FOR UPDATE USING (public.is_admin());
+
+CREATE POLICY "Admins can delete schools" ON schools
+    FOR DELETE USING (public.is_admin());
 
 CREATE POLICY "Users can view their conversations" ON conversations
     FOR SELECT USING (auth.uid() = ANY(participant_ids));
@@ -393,6 +460,54 @@ CREATE POLICY "Users can create notifications" ON notifications
     FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 
 GRANT ALL ON TABLE notifications TO authenticated, service_role;
+
+-- 26. Platform Settings
+CREATE TABLE IF NOT EXISTS platform_settings (
+    id INT PRIMARY KEY DEFAULT 1,
+    platform_logo_url TEXT,
+    platform_name TEXT DEFAULT 'FerdIT School Software',
+    contact_phone TEXT DEFAULT '+233247823410',
+    contact_email TEXT DEFAULT 'ferditgh@gmail.com',
+    contact_country TEXT DEFAULT 'Ghana',
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO platform_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- RLS for Platform Settings
+ALTER TABLE platform_settings ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+    CREATE POLICY "Anyone can read platform settings" ON platform_settings FOR SELECT USING (true);
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE POLICY "Only super admins can update platform settings" ON platform_settings FOR UPDATE USING (
+        EXISTS (
+            SELECT 1 FROM profiles
+            WHERE profiles.id = auth.uid()
+            AND profiles.role = 'Admin'
+            AND profiles.school_id IS NULL
+        )
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+    CREATE POLICY "Only super admins can insert platform settings" ON platform_settings FOR INSERT WITH CHECK (
+        EXISTS (
+            SELECT 1 FROM profiles
+            WHERE profiles.id = auth.uid()
+            AND profiles.role = 'Admin'
+            AND profiles.school_id IS NULL
+        )
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- End of Script
 

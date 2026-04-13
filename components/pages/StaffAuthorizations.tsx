@@ -31,9 +31,9 @@ const StaffAuthorizations: React.FC<StaffAuthorizationsProps> = ({ profile, setA
       if (pendingRes.error) throw new Error(pendingRes.error);
       
       // Find which authorized teachers are missing a record in the 'teachers' table
-      const { data: teacherRecords } = await supabase.from('teachers').select('id').eq('school_id', profile.school_id);
-      const teacherIds = new Set((teacherRecords || []).map(t => t.id));
-      const incomplete = (allSchoolStaffRes.data || []).filter(p => !teacherIds.has(p.id));
+      const { data: teacherRecords } = await supabase.from('teachers').select('email').eq('school_id', profile.school_id);
+      const teacherEmails = new Set((teacherRecords || []).map(t => t.email));
+      const incomplete = (allSchoolStaffRes.data || []).filter(p => !teacherEmails.has(p.email));
 
       if (pendingRes.data) setPendingTeachers(pendingRes.data);
       setIncompleteTeachers(incomplete);

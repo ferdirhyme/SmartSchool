@@ -137,7 +137,7 @@ const ClassAttendance: React.FC<ClassAttendanceProps> = ({ session, profile: use
 
     try {
       const { error } = await supabase.from('student_attendance').upsert(recordsToUpsert, {
-        onConflict: 'student_id, attendance_date',
+        onConflict: 'school_id,student_id,attendance_date',
       });
       if (error) throw error;
       

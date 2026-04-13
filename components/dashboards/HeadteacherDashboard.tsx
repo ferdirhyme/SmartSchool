@@ -24,6 +24,9 @@ import HeadteacherDashboardHome from '../pages/HeadteacherDashboardHome.tsx';
 import { ReportViewer } from '../reports/ReportViewer.tsx';
 import TermRemarks from '../pages/TermRemarks.tsx';
 
+import FeedbackPage from '../pages/FeedbackPage.tsx';
+import ProfilePage from '../pages/ProfilePage.tsx';
+
 interface DashboardProps {
   session: Session;
   profile: Profile;
@@ -83,6 +86,10 @@ const HeadteacherDashboard: React.FC<DashboardProps> = ({ session, profile }) =>
         return <ReportsPage session={session} profile={profile} onReportSelect={setSelectedReport} />;
       case 'Messages':
         return <MessagesPage session={session} profile={profile} initialConversationId={typeof activePage === 'object' ? activePage.conversationId : undefined} />;
+      case 'Profile':
+        return <ProfilePage session={session} profile={profile} />;
+      case 'Feedback':
+        return <FeedbackPage session={session} profile={profile} />;
       case 'Settings':
         return <SettingsPage profile={profile} />;
       default:

@@ -20,7 +20,7 @@ STABLE
 AS $$
   SELECT EXISTS (
     SELECT 1 FROM profiles 
-    WHERE id = auth.uid() AND role = 'Superadmin'
+    WHERE id = auth.uid() AND role = 'Admin'
   );
 $$;
 

@@ -140,19 +140,48 @@ const PromotionPage: React.FC<PromotionPageProps> = ({ profile }) => {
     setIsPromoting(true);
     setMessage(null);
     
-    const { error } = await supabase
+    const destClassName = classes.find(c => c.id === destinationClassId)?.name || '';
+    
+    // 1. Update student's current class
+    const { error: studentUpdateError } = await supabase
         .from('students')
         .update({ class_id: destinationClassId })
         .in('id', Array.from(selectedStudentIds));
 
-    if (error) {
-        setMessage({ type: 'error', text: `Promotion failed: ${error.message}` });
+    if (studentUpdateError) {
+        setMessage({ type: 'error', text: `Promotion failed: ${studentUpdateError.message}` });
+        setIsPromoting(false);
+        setIsModalOpen(false);
+        return;
+    }
+
+    // 2. Record promotion in term reports for historical tracking
+    const termReportsToUpsert = Array.from(selectedStudentIds).map(studentId => ({
+        school_id: profile.school_id,
+        student_id: studentId,
+        class_id: sourceClassId,
+        term: useAllTerms ? 'Term 3' : termName,
+        year: academicYear,
+        promoted_to: destClassName
+    }));
+
+    const { error: termReportError } = await supabase
+        .from('student_term_reports')
+        .upsert(termReportsToUpsert, {
+            onConflict: 'school_id,student_id,class_id,term,year'
+        });
+
+    if (termReportError) {
+        console.error("Failed to record promotion in term reports:", termReportError);
+        // We don't fail the whole process if this fails, but we log it.
+        setMessage({ type: 'success', text: `${selectedStudentIds.size} student(s) promoted successfully, but historical record update failed.` });
     } else {
         setMessage({ type: 'success', text: `${selectedStudentIds.size} student(s) promoted successfully!` });
-        // Reset state after promotion
-        setStudents([]);
-        setSelectedStudentIds(new Set());
     }
+
+    // Reset state after promotion
+    setStudents([]);
+    setSelectedStudentIds(new Set());
     setIsPromoting(false);
     setIsModalOpen(false);
   };

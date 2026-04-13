@@ -88,7 +88,6 @@ const StudentProfilePage: React.FC<StudentProfilePageProps> = ({ studentId, onBa
                 .from('student_assessments')
                 .select('*, subject:subjects(name)')
                 .eq('student_id', studentId)
-                .eq('class_id', student.class.id)
                 .eq('year', selectedYear)
                 .eq('term', selectedTerm)
                 .eq('school_id', userProfile.school_id);

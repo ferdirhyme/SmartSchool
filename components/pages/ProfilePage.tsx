@@ -27,7 +27,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
         setMessage(null);
         try {
             let fetchedProfile = null;
-            if (profile.role === UserRole.Teacher) {
+            if (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher) {
                 const { data: teacherId, error: rpcError } = await supabase
                     .rpc('get_teacher_id_by_auth_email');
                 
@@ -76,8 +76,9 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
             let imageUrl = formData.image_url;
 
             // Handle image upload if a new file is selected
-            if (imageFile && (profile.role === UserRole.Student || profile.role === UserRole.Teacher)) {
-                const filePath = `${profile.role.toLowerCase()}s/${detailedProfile.id}`;
+            if (imageFile && (profile.role === UserRole.Student || profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher)) {
+                const folder = (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher) ? 'teachers' : 'students';
+                const filePath = `${folder}/${detailedProfile.id}`;
                 const { error: uploadError } = await supabase.storage
                     .from('avatars')
                     .upload(filePath, imageFile, { upsert: true });
@@ -101,9 +102,15 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
             if (profileError) throw profileError;
 
             // Step 2: Update the role-specific table
-            if (profile.role === UserRole.Teacher) {
-                const { id, created_at, email, image_url, ...teacherData } = formData;
-                const { error: teacherError } = await supabase.from('teachers').update({ ...teacherData, image_url: imageUrl }).eq('id', detailedProfile.id);
+            if (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher) {
+                const teacherUpdate = {
+                    full_name: formData.full_name,
+                    date_of_birth: formData.date_of_birth,
+                    rank: formData.rank,
+                    phone_number: formData.phone_number,
+                    image_url: imageUrl
+                };
+                const { error: teacherError } = await supabase.from('teachers').update(teacherUpdate).eq('id', detailedProfile.id);
                 if (teacherError) throw teacherError;
             }
             if (profile.role === UserRole.Student) {
@@ -129,15 +136,15 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
         setFormData({ ...profile, ...detailedProfile }); // Reset form to original data
     };
     
-    const inputClasses = "block w-full p-3 bg-gray-50 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-400";
-    const readOnlyClasses = `${inputClasses} bg-gray-200 dark:bg-gray-800 cursor-not-allowed`;
+    const inputClasses = "block w-full p-3 bg-gray-50 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 dark:bg-gray-800/50 dark:border-gray-700 dark:text-white dark:placeholder-gray-500 transition-all";
+    const readOnlyClasses = `${inputClasses} bg-gray-100 dark:bg-gray-800/80 cursor-not-allowed opacity-70`;
 
     const renderField = (label: string, name: keyof any, type = 'text', readOnly = !isEditing) => {
         const value = formData[name] || '';
         if (type === 'select') {
              return (
                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{label}</label>
                     <select name={name as string} value={value} onChange={handleFormChange} disabled={readOnly} className={readOnly ? readOnlyClasses : inputClasses}>
                         <option>Male</option>
                         <option>Female</option>
@@ -147,27 +154,31 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
         }
         return (
             <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{label}</label>
+                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{label}</label>
                 <input type={type} name={name as string} value={value} onChange={handleFormChange} readOnly={readOnly} className={readOnly ? readOnlyClasses : inputClasses} />
             </div>
         );
     };
 
-    if (isLoading) return <p>Loading profile...</p>;
+    if (isLoading) return (
+        <div className="flex items-center justify-center p-12">
+            <div className="w-8 h-8 border-4 border-brand-600 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+    );
 
     return (
-        <div>
+        <div className="space-y-8">
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold text-gray-900 dark:text-white">My Profile</h1>
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white">My Profile</h1>
                 {!isEditing && (
-                    <button onClick={() => setIsEditing(true)} className="px-4 py-2 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700">
+                    <button onClick={() => setIsEditing(true)} className="px-5 py-2.5 text-sm font-bold text-white bg-brand-600 rounded-xl hover:bg-brand-700 transition-all active:scale-[0.98] shadow-sm">
                         Edit Profile
                     </button>
                 )}
             </div>
 
             {message && (
-                <div className={`p-4 rounded-md mb-6 ${message.type === 'success' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'}`}>
+                <div className={`p-4 rounded-xl border mb-6 font-medium ${message.type === 'success' ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800/50 dark:text-green-300' : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800/50 dark:text-red-300'}`}>
                     {message.text}
                 </div>
             )}
@@ -175,20 +186,20 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
             <form onSubmit={handleSave}>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     {/* Image Column */}
-                    {(profile.role === UserRole.Student || profile.role === UserRole.Teacher) && (
+                    {(profile.role === UserRole.Student || profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher) && (
                         <div className="lg:col-span-1">
-                             <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                                <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">Profile Picture</h2>
+                             <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                                <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">Profile Picture</h2>
                                 {isEditing ? (
                                     <ImageUpload onFileChange={setImageFile} defaultImageUrl={formData.image_url} />
                                 ) : (
-                                    <div className="w-full h-48 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-700 flex items-center justify-center">
+                                    <div className="w-full aspect-square rounded-2xl overflow-hidden bg-gray-50 dark:bg-gray-700/50 flex items-center justify-center border border-gray-100 dark:border-gray-700">
                                         {formData.image_url ? (
                                             <img src={formData.image_url} alt={formData.full_name} className="w-full h-full object-cover"/>
                                         ) : (
-                                            <div className="text-center text-gray-500">
-                                                <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                                                <span className="mt-2 block text-sm font-medium">No Image</span>
+                                            <div className="text-center text-gray-400 dark:text-gray-500">
+                                                <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-16 w-16 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                                                <span className="block text-sm font-bold">No Image</span>
                                             </div>
                                         )}
                                     </div>
@@ -198,8 +209,8 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
                     )}
                     
                     {/* Form Fields Column */}
-                    <div className={(profile.role === UserRole.Student || profile.role === UserRole.Teacher) ? "lg:col-span-2" : "lg:col-span-3"}>
-                        <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg space-y-6">
+                    <div className={(profile.role === UserRole.Student || profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher) ? "lg:col-span-2" : "lg:col-span-3"}>
+                        <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm space-y-8">
                             {/* Common Fields */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {renderField("Full Name", "full_name")}
@@ -207,7 +218,7 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
                             </div>
                             
                             {/* Role-Specific Fields */}
-                            {profile.role === UserRole.Teacher && (
+                            {(profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher) && (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     {renderField("Date of Birth", "date_of_birth", 'date')}
                                     {renderField("Phone Number", "phone_number", 'tel')}
@@ -221,23 +232,27 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
                                     {renderField("Gender", "gender", 'select')}
                                     {renderField("NHIS Number", "nhis_number")}
                                 </div>
-                                <h2 className="text-xl font-semibold pt-4 border-t dark:border-gray-600">Guardian Details</h2>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    {renderField("Guardian Name", "guardian_name")}
-                                    {renderField("Guardian Contact", "guardian_contact", 'tel')}
-                                    {renderField("GPS Address", "gps_address")}
+                                <div className="pt-6 border-t border-gray-100 dark:border-gray-700">
+                                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Guardian Details</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        {renderField("Guardian Name", "guardian_name")}
+                                        {renderField("Guardian Contact", "guardian_contact", 'tel')}
+                                        {renderField("GPS Address", "gps_address")}
+                                    </div>
                                 </div>
                                 </>
                             )}
                             {profile.role === UserRole.Parent && (
                                 <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
                                         Ward's Admission Number(s)
                                     </label>
                                 {isEditing ? (
-                                        <p className="text-xs text-gray-500">Editing admission numbers is not supported yet.</p>
+                                        <p className="text-sm text-gray-500 font-medium">Editing admission numbers is not supported yet.</p>
                                 ) : (
-                                        <p>{(formData.admission_numbers || []).join(', ')}</p>
+                                        <div className="p-4 bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700 rounded-xl font-mono text-sm">
+                                            {(formData.admission_numbers || []).join(', ')}
+                                        </div>
                                 )}
                                 </div>
                             )}
@@ -246,9 +261,9 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
                 </div>
 
                 {isEditing && (
-                    <div className="flex justify-end gap-4 mt-8">
-                        <button type="button" onClick={handleCancel} className="px-6 py-3 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-700 dark:border-gray-500">Cancel</button>
-                        <button type="submit" disabled={isSaving} className="px-6 py-3 text-sm font-medium text-white bg-brand-600 rounded-md hover:bg-brand-700 disabled:opacity-50">
+                    <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="button" onClick={handleCancel} className="px-6 py-2.5 text-sm font-bold text-gray-700 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700 dark:border-gray-700 transition-colors">Cancel</button>
+                        <button type="submit" disabled={isSaving} className="px-6 py-2.5 text-sm font-bold text-white bg-brand-600 rounded-xl hover:bg-brand-700 disabled:opacity-50 transition-all active:scale-[0.98] shadow-sm">
                             {isSaving ? 'Saving...' : 'Save Changes'}
                         </button>
                     </div>

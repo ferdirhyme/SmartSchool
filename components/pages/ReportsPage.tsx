@@ -15,6 +15,7 @@ const allReportOptions = [
     { type: 'ClassList' as ReportType, title: 'Class List / Roster', description: 'Generate a printable list of all students in a class.', icon: StudentsIcon },
     { type: 'AttendanceReport' as ReportType, title: 'Class Attendance Report', description: 'Generate a student attendance summary for a class over a date range.', icon: AttendanceIcon },
     { type: 'TeacherAttendanceReport' as ReportType, title: 'Teacher Attendance Report', description: 'Generate an attendance summary for teachers over a date range.', icon: TeachersIcon },
+    { type: 'PreviousRecords' as ReportType, title: 'Previous Records', description: 'Access and generate reports for past academic years and terms.', icon: ReportsIcon },
 ];
 
 interface ReportCardProps {
@@ -29,16 +30,16 @@ const ReportCard: React.FC<ReportCardProps> = ({ type, title, description, icon:
     return (
         <button
             onClick={() => onSelect(type)}
-            className="w-full text-left p-6 bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-lg hover:border-brand-500 border-2 border-transparent transition-all duration-300 flex items-start space-x-4"
+            className="w-full text-left p-6 bg-white dark:bg-gray-800 rounded-2xl shadow-sm hover:shadow-md hover:border-brand-500 border border-gray-100 dark:border-gray-700 transition-all duration-300 flex items-start space-x-4 group active:scale-[0.98]"
         >
             <div className="flex-shrink-0">
-                <div className="w-12 h-12 rounded-lg bg-brand-100 dark:bg-brand-900 flex items-center justify-center">
+                <div className="w-12 h-12 rounded-xl bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center group-hover:bg-brand-100 dark:group-hover:bg-brand-900/50 transition-colors">
                     <Icon className="w-6 h-6 text-brand-600 dark:text-brand-400" />
                 </div>
             </div>
             <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">{title}</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{description}</p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">{title}</h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1.5 font-medium leading-relaxed">{description}</p>
             </div>
         </button>
     );
@@ -68,12 +69,16 @@ const ReportsPage: React.FC<ReportsPageProps> = ({ session, profile, onReportSel
     }, [profile.role]);
 
     return (
-        <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">Generate School Reports</h1>
-            <p className="text-gray-600 dark:text-gray-300 mb-8">Select a report type to begin. You will be prompted to select the necessary filters before generation.</p>
+        <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div>
+                <h1 className="text-3xl font-black text-gray-900 dark:text-white mb-2 tracking-tight">Generate School Reports</h1>
+                <p className="text-gray-500 dark:text-gray-400 font-medium">Select a report type to begin. You will be prompted to select the necessary filters before generation.</p>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {reportOptions.map(option => (
-                    <ReportCard key={option.type} {...option} onSelect={onReportSelect} />
+                {reportOptions.map((option, idx) => (
+                    <div key={option.type} className="animate-in fade-in slide-in-from-bottom-4" style={{ animationDelay: `${idx * 50}ms`, animationFillMode: 'both' }}>
+                        <ReportCard {...option} onSelect={onReportSelect} />
+                    </div>
                 ))}
             </div>
         </div>

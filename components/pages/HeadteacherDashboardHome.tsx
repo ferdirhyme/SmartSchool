@@ -13,25 +13,27 @@ interface HeadteacherDashboardHomeProps {
 }
 
 const StatCard: React.FC<{ title: string; value: string; icon: React.FC<{ className?: string }>; isLoading: boolean }> = ({ title, value, icon: Icon, isLoading }) => (
-  <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md flex items-center space-x-4">
-    <div className="bg-brand-100 dark:bg-brand-900 p-3 rounded-full">
-      <Icon className="w-6 h-6 text-brand-600 dark:text-brand-400" />
+  <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center space-x-5 transition-all duration-200 hover:shadow-md hover:border-brand-200 dark:hover:border-brand-800">
+    <div className="bg-brand-50 dark:bg-brand-900/30 p-4 rounded-xl">
+      <Icon className="w-7 h-7 text-brand-600 dark:text-brand-400" />
     </div>
     <div>
-      <p className="text-sm text-gray-500 dark:text-gray-400">{title}</p>
+      <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-1">{title}</p>
       {isLoading ? (
-        <div className="h-7 w-20 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>
+        <div className="h-8 w-24 bg-gray-200 dark:bg-gray-700 rounded-md animate-pulse"></div>
       ) : (
-        <p className="text-2xl font-bold text-gray-900 dark:text-white">{value}</p>
+        <p className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">{value}</p>
       )}
     </div>
   </div>
 );
 
 const QuickAction: React.FC<{ title: string; icon: React.FC<{ className?: string }>; onClick: () => void; }> = ({ title, icon: Icon, onClick }) => (
-    <button onClick={onClick} className="flex flex-col items-center justify-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-        <Icon className="w-8 h-8 text-brand-600 dark:text-brand-400 mb-2" />
-        <span className="text-sm font-semibold text-gray-700 dark:text-white text-center">{title}</span>
+    <button onClick={onClick} className="flex flex-col items-center justify-center p-5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl hover:bg-brand-50 dark:hover:bg-gray-700/80 hover:border-brand-200 dark:hover:border-gray-600 transition-all duration-200 group shadow-sm hover:shadow-md">
+        <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded-xl mb-3 group-hover:bg-brand-100 dark:group-hover:bg-brand-900/50 transition-colors">
+            <Icon className="w-7 h-7 text-gray-600 dark:text-gray-300 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors" />
+        </div>
+        <span className="text-sm font-semibold text-gray-700 dark:text-gray-200 text-center group-hover:text-brand-700 dark:group-hover:text-brand-300 transition-colors">{title}</span>
     </button>
 );
 
@@ -100,19 +102,19 @@ const HeadteacherDashboardHome: React.FC<HeadteacherDashboardHomeProps> = ({ pro
 
             {/* Incomplete Profiles Notification */}
             {incompleteProfiles.length > 0 && (
-                <div className="mb-8 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3 text-amber-800 dark:text-amber-300">
-                        <div className="w-10 h-10 bg-amber-100 dark:bg-amber-800 rounded-full flex items-center justify-center shrink-0">
+                <div className="mb-8 p-5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm">
+                    <div className="flex items-center gap-4 text-amber-800 dark:text-amber-300">
+                        <div className="w-12 h-12 bg-amber-100 dark:bg-amber-800/50 rounded-full flex items-center justify-center shrink-0">
                             <AddTeacherIcon className="w-6 h-6" />
                         </div>
                         <div>
-                            <p className="font-bold">Incomplete Staff Profiles</p>
-                            <p className="text-sm">There are {incompleteProfiles.length} authorized teachers who haven't completed their school profile details yet.</p>
+                            <p className="font-bold text-base">Incomplete Staff Profiles</p>
+                            <p className="text-sm mt-0.5">There are {incompleteProfiles.length} authorized teachers who haven't completed their school profile details yet.</p>
                         </div>
                     </div>
                     <button 
                         onClick={() => setActivePage('Staff Authorizations')}
-                        className="px-6 py-2 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition-colors shrink-0"
+                        className="px-6 py-2.5 bg-amber-600 text-white rounded-xl font-bold hover:bg-amber-700 transition-colors shrink-0 shadow-sm hover:shadow-md active:scale-[0.98]"
                     >
                         Complete Profiles
                     </button>
@@ -130,28 +132,30 @@ const HeadteacherDashboardHome: React.FC<HeadteacherDashboardHomeProps> = ({ pro
                 {/* Main Widgets */}
                 <div className="lg:col-span-2 space-y-6">
                     {/* Financial Overview */}
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                        <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">Financial Overview</h3>
-                        <div className="flex items-center space-x-4">
-                            <CashIcon className="w-10 h-10 text-green-500"/>
+                    <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Financial Overview</h3>
+                        <div className="flex items-center space-x-5">
+                            <div className="bg-green-50 dark:bg-green-900/30 p-4 rounded-xl">
+                                <CashIcon className="w-8 h-8 text-green-600 dark:text-green-400"/>
+                            </div>
                             <div>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Total Fees Collected (This Year)</p>
+                                <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-1">Total Fees Collected (This Year)</p>
                                 {isLoading ? (
-                                    <div className="h-8 w-40 bg-gray-200 dark:bg-gray-700 rounded animate-pulse mt-1"></div>
+                                    <div className="h-10 w-48 bg-gray-200 dark:bg-gray-700 rounded-md animate-pulse"></div>
                                 ) : (
-                                    <p className="text-3xl font-bold text-gray-900 dark:text-white">GHS {financials.collected.toLocaleString('en-GH', { minimumFractionDigits: 2 })}</p>
+                                    <p className="text-4xl font-extrabold text-gray-900 dark:text-white tracking-tight">GHS {financials.collected.toLocaleString('en-GH', { minimumFractionDigits: 2 })}</p>
                                 )}
                             </div>
                         </div>
                         {/* Progress bar placeholder */}
-                        <div className="mt-4 h-2 w-full bg-gray-200 dark:bg-gray-700 rounded-full">
-                            <div className="h-2 bg-green-500 rounded-full" style={{width: '70%'}}></div>
+                        <div className="mt-6 h-2.5 w-full bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden">
+                            <div className="h-full bg-green-500 rounded-full transition-all duration-1000 ease-out" style={{width: '70%'}}></div>
                         </div>
                     </div>
 
                     {/* Quick Actions */}
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                        <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">Quick Actions</h3>
+                    <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Quick Actions</h3>
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                             <QuickAction title="Admit Student" icon={AddStudentIcon} onClick={() => setActivePage('Add Students')} />
                             <QuickAction title="Manage Fees" icon={FeesIcon} onClick={() => setActivePage('Fees')} />
@@ -162,26 +166,28 @@ const HeadteacherDashboardHome: React.FC<HeadteacherDashboardHomeProps> = ({ pro
                 </div>
 
                 {/* Side Widget: Announcements */}
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                    <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4">Recent Announcements</h3>
+                <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col">
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Recent Announcements</h3>
                      {isLoading ? (
-                        <div className="space-y-4">
-                            {[...Array(3)].map((_, i) => <div key={i} className="h-12 bg-gray-200 dark:bg-gray-700 rounded animate-pulse"></div>)}
+                        <div className="space-y-4 flex-grow">
+                            {[...Array(3)].map((_, i) => <div key={i} className="h-16 bg-gray-100 dark:bg-gray-700 rounded-xl animate-pulse"></div>)}
                         </div>
                     ) : announcements.length > 0 ? (
-                        <ul className="space-y-4">
+                        <ul className="space-y-4 flex-grow">
                            {announcements.map(ann => (
-                               <li key={ann.id} className="p-3 bg-blue-50 dark:bg-blue-900/30 rounded-md">
-                                   <p className="text-sm text-blue-800 dark:text-blue-200">{ann.message}</p>
-                                   <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Expires: {new Date(ann.expiry_date).toLocaleDateString()}</p>
+                               <li key={ann.id} className="p-4 bg-brand-50 dark:bg-brand-900/20 border border-brand-100 dark:border-brand-800/50 rounded-xl transition-all hover:shadow-sm">
+                                   <p className="text-sm font-medium text-brand-900 dark:text-brand-100 mb-2">{ann.message}</p>
+                                   <p className="text-xs font-semibold text-brand-600 dark:text-brand-400">Expires: {new Date(ann.expiry_date).toLocaleDateString()}</p>
                                </li>
                            ))}
                        </ul>
                     ) : (
-                       <p className="text-sm text-gray-500 dark:text-gray-400">No active announcements.</p>
+                       <div className="flex-grow flex items-center justify-center">
+                           <p className="text-sm font-medium text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700/50 px-4 py-3 rounded-lg">No active announcements.</p>
+                       </div>
                     )}
-                    <button onClick={() => setActivePage('Manage Announcements')} className="mt-4 text-sm font-medium text-brand-600 hover:underline w-full text-center">
-                        Manage All
+                    <button onClick={() => setActivePage('Manage Announcements')} className="mt-6 py-2.5 px-4 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 text-sm font-bold text-gray-700 dark:text-gray-200 rounded-xl w-full text-center transition-colors">
+                        Manage All Announcements
                     </button>
                 </div>
             </div>

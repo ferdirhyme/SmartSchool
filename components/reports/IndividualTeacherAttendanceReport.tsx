@@ -33,41 +33,91 @@ export const IndividualTeacherAttendanceReport: React.FC<{ data: ReportData }> =
     const handlePrint = () => {
         const printArea = document.querySelector('.print-area');
         if (printArea) {
-            const printWindow = window.open('', '_blank', 'width=900,height=650');
+            const printWindow = window.open('', '_blank', 'width=1000,height=800');
             if(!printWindow) {
                 alert('Please allow pop-ups to print the report.');
                 return;
             }
-            const styles = Array.from(document.head.querySelectorAll('style, link[rel="stylesheet"]'))
+            
+            // Gather styles
+            const styles = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
                 .map(el => el.outerHTML)
                 .join('');
-            const tailwindScript = `<script src="https://cdn.tailwindcss.com"></script>`;
-            const tailwindConfigScript = Array.from(document.head.querySelectorAll('script'))
-                .find(s => s.textContent?.includes('tailwind.config'))?.outerHTML || '';
-            const printStyles = `<style>body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }</style>`;
+            
+            // Tailwind config script if present
+            const scripts = Array.from(document.querySelectorAll('script'))
+                .filter(s => s.src.includes('tailwindcss') || s.innerHTML.includes('tailwind.config'))
+                .map(s => s.outerHTML)
+                .join('');
+
+            const content = printArea.innerHTML;
 
             printWindow.document.write(`
+                <!DOCTYPE html>
                 <html>
-                    <head>
-                        <title>Teacher Attendance Report</title>
-                        ${styles}
-                        ${tailwindScript}
-                        ${tailwindConfigScript}
-                        ${printStyles}
-                    </head>
-                    <body class="bg-white">
-                        ${printArea.innerHTML}
-                    </body>
+                <head>
+                    <title>Teacher Attendance Report</title>
+                    ${styles}
+                    ${scripts}
+                    <style>
+                        @media print {
+                            @page { 
+                                size: portrait; 
+                                margin: 1cm; 
+                            }
+                            body { 
+                                -webkit-print-color-adjust: exact; 
+                                print-color-adjust: exact; 
+                                background-color: white !important; 
+                                margin: 0;
+                                padding: 0;
+                            }
+                            * {
+                                overflow: visible !important;
+                                box-shadow: none !important;
+                            }
+                            table {
+                                width: 100% !important;
+                                max-width: 100% !important;
+                                table-layout: auto !important;
+                                border-collapse: collapse !important;
+                            }
+                            td, th {
+                                word-break: break-word !important;
+                            }
+                            .print-area {
+                                width: 100% !important;
+                                margin: 0 !important;
+                                padding: 0 !important;
+                                background-color: transparent !important;
+                            }
+                        }
+                        body { 
+                            background-color: white !important; 
+                            padding: 20px; 
+                            font-family: 'Inter', sans-serif; 
+                        }
+                        .bg-gray-50 { background-color: #f9fafb !important; }
+                        .bg-gray-100 { background-color: #f3f4f6 !important; }
+                        .bg-green-100 { background-color: #dcfce7 !important; }
+                        .bg-red-100 { background-color: #fee2e2 !important; }
+                    </style>
+                </head>
+                <body>
+                    <div class="print-area">
+                        ${content}
+                    </div>
+                    <script>
+                        window.onload = function() {
+                            setTimeout(function() {
+                                window.print();
+                            }, 1000);
+                        };
+                    </script>
+                </body>
                 </html>
             `);
             printWindow.document.close();
-            printWindow.onload = () => {
-                setTimeout(() => {
-                    printWindow.focus();
-                    printWindow.print();
-                    printWindow.close();
-                }, 500);
-            };
         }
     };
 

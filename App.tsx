@@ -38,7 +38,7 @@ const App: React.FC = () => {
       if (err instanceof TypeError && err.message === 'Failed to fetch') {
         console.error("Profile Fetch Failed: Network error. Please check if Supabase is reachable.");
       } else {
-        console.error("Profile Fetch Failed:", err);
+        console.error("Profile Fetch Failed:", err); if (err.code === 'PGRST303' || err?.message?.includes('JWT expired')) { supabase.auth.signOut(); }
       }
     } finally {
       setLoading(false);
@@ -134,9 +134,13 @@ const App: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-brand-900">
-        <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
-        <p className="mt-4 text-white font-medium tracking-widest uppercase text-xs">SmartSchool SaaS</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-brand-400 via-brand-800 to-brand-950"></div>
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="w-16 h-16 border-4 border-brand-200 dark:border-brand-900/50 border-t-brand-600 dark:border-t-brand-400 rounded-full animate-spin shadow-lg"></div>
+          <p className="mt-6 text-brand-900 dark:text-brand-100 font-bold tracking-widest uppercase text-sm animate-pulse">SmartSchool</p>
+          <p className="mt-2 text-gray-500 dark:text-gray-400 text-xs font-medium">Loading your workspace...</p>
+        </div>
       </div>
     );
   }
@@ -167,7 +171,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <SettingsProvider session={session}>
+    <SettingsProvider session={session} profile={profile}>
       {profile.role === UserRole.Admin && <AdminDashboard session={session} profile={profile} />}
       {profile.role === UserRole.Headteacher && <HeadteacherDashboard session={session} profile={profile} />}
       {profile.role === UserRole.Teacher && <TeacherDashboard session={session} profile={profile} />}

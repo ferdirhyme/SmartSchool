@@ -3,10 +3,13 @@ import React, { useEffect, useState } from 'react';
 import { Profile, School, UserRole } from '../../types.ts';
 import DashboardLayout from '../layout/DashboardLayout.tsx';
 import { NavItem } from '../../lib/navigation.ts';
-import { LayoutDashboard, School as SchoolIcon, Users, Settings, Plus, ShieldCheck, Search, ArrowLeft, CreditCard } from 'lucide-react';
+import { LayoutDashboard, School as SchoolIcon, Users, Settings, Plus, ShieldCheck, Search, ArrowLeft, CreditCard, Image as ImageIcon, MessageSquare } from 'lucide-react';
 import { schoolService } from '../../modules/school/school.service.ts';
 import { profileService } from '../../modules/core/profile.service.ts';
 import { SchoolSettingsComponent } from '../pages/SettingsPage.tsx';
+import { PromoManagement } from '../pages/admin/PromoManagement.tsx';
+import { PlatformSettingsComponent } from '../pages/admin/PlatformSettings.tsx';
+import FeedbackPage from '../pages/FeedbackPage.tsx';
 
 interface AdminDashboardProps {
   session: any;
@@ -19,10 +22,12 @@ const adminNavItems: NavItem[] = [
   { label: 'Payment Gateway', icon: CreditCard },
   { label: 'Authorizations', icon: ShieldCheck },
   { label: 'Users', icon: Users },
+  { label: 'Ad Management', icon: ImageIcon },
+  { label: 'Feedback', icon: MessageSquare },
   { label: 'Platform Settings', icon: Settings },
 ];
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ session, profile }) => {
   const [activePage, setActivePage] = useState('Overview');
   const [schools, setSchools] = useState<School[]>([]);
   const [pendingHeadteachers, setPendingHeadteachers] = useState<Profile[]>([]);
@@ -435,62 +440,14 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ profile }) => {
           </div>
         );
 
-      case 'Platform Settings':
-        return (
-          <div className="space-y-6">
-            <h2 className="text-xl font-bold">Platform Settings</h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700">
-                <h3 className="font-bold mb-4 flex items-center gap-2">
-                  <Settings className="w-4 h-4 text-brand-600" />
-                  General Configuration
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
-                    <div>
-                      <p className="text-sm font-bold">Maintenance Mode</p>
-                      <p className="text-xs text-gray-500">Disable platform access for all users</p>
-                    </div>
-                    <div className="w-10 h-5 bg-gray-300 dark:bg-gray-700 rounded-full relative cursor-pointer">
-                      <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-all"></div>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl">
-                    <div>
-                      <p className="text-sm font-bold">New Registrations</p>
-                      <p className="text-xs text-gray-500">Allow new users to sign up</p>
-                    </div>
-                    <div className="w-10 h-5 bg-brand-500 rounded-full relative cursor-pointer">
-                      <div className="absolute right-1 top-1 w-3 h-3 bg-white rounded-full transition-all"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
+      case 'Ad Management':
+        return <PromoManagement />;
 
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700">
-                <h3 className="font-bold mb-4 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-brand-600" />
-                  System Health
-                </h3>
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-500">Database Status</span>
-                    <span className="text-green-500 font-bold">Connected</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-500">Storage Usage</span>
-                    <span className="font-bold">1.2 GB / 10 GB</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-500">API Latency</span>
-                    <span className="font-bold">42ms</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
+      case 'Feedback':
+        return <FeedbackPage session={session} profile={profile} />;
+
+      case 'Platform Settings':
+        return <PlatformSettingsComponent />;
 
       default:
         return (

@@ -137,31 +137,16 @@ const ManageClasses: React.FC<ManageClassesProps> = ({ profile }) => {
                 // 2. If a teacher is selected, add the new assignment
                 if (selectedTeacherId) {
                     // Check if this teacher already has this class assigned (maybe as non-homeroom)
-                    const { data: existing } = await supabase
+                    const { error: assignError } = await supabase
                         .from('teacher_classes')
-                        .select('*')
-                        .eq('teacher_id', selectedTeacherId)
-                        .eq('class_id', classId)
-                        .maybeSingle();
-
-                    if (existing) {
-                        // Update existing assignment to be homeroom
-                        await supabase
-                            .from('teacher_classes')
-                            .update({ is_homeroom: true })
-                            .eq('teacher_id', selectedTeacherId)
-                            .eq('class_id', classId);
-                    } else {
-                        // Insert new assignment
-                        await supabase
-                            .from('teacher_classes')
-                            .insert({
-                                teacher_id: selectedTeacherId,
-                                class_id: classId,
-                                is_homeroom: true,
-                                school_id: profile.school_id
-                            });
-                    }
+                        .upsert({
+                            teacher_id: selectedTeacherId,
+                            class_id: classId,
+                            is_homeroom: true,
+                            school_id: profile.school_id
+                        }, { onConflict: 'teacher_id,class_id' });
+                    
+                    if (assignError) throw assignError;
                 }
             }
 

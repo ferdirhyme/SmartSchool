@@ -1,4 +1,3 @@
-
 import React, { useState, FormEvent, useEffect } from 'react';
 import { supabase } from '../../lib/supabase.ts';
 import { Teacher, Class, Subject, Profile } from '../../types.ts';
@@ -24,29 +23,19 @@ const AddTeacher: React.FC<AddTeacherProps> = ({ profile, prefillProfile }) => {
   };
 
   const [formData, setFormData] = useState(initialState);
-
-  // Update form if prefillProfile changes (e.g. after redirection)
-  useEffect(() => {
-    if (prefillProfile) {
-      setFormData(prev => ({
-        ...prev,
-        full_name: prefillProfile.full_name,
-        email: prefillProfile.email || prev.email
-      }));
-    }
-  }, [prefillProfile]);
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [classes, setClasses] = useState<Class[]>([]);
+  const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
   const [selectedTeachableClassIds, setSelectedTeachableClassIds] = useState<string[]>([]);
   const [homeroomClassId, setHomeroomClassId] = useState<string | null>(null);
-  const [classes, setClasses] = useState<Class[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
-  const [isFetchingPrerequisites, setIsFetchingPrerequisites] = useState(true);
+  const [isFetchingPrerequisites, setIsFetchingPrerequisites] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
 
+  // Update form if prefillProfile changes (e.g. after redirection)
   useEffect(() => {
     const fetchData = async () => {
       setIsFetchingPrerequisites(true);
@@ -62,7 +51,35 @@ const AddTeacher: React.FC<AddTeacherProps> = ({ profile, prefillProfile }) => {
 
         setClasses(classRes.data || []);
         setSubjects(subjectRes.data || []);
+
+        // If we are editing/prefilling, fetch current assignments
+        if (prefillProfile) {
+          // Find the teacher record by email to get the correct ID for assignments
+          const { data: teacherRecord } = await supabase
+            .from('teachers')
+            .select('id')
+            .eq('email', prefillProfile.email)
+            .single();
+
+          const teacherIdToUse = teacherRecord?.id || prefillProfile.id;
+
+          const [teacherClassesRes, teacherSubjectsRes] = await Promise.all([
+            supabase.from('teacher_classes').select('class_id, is_homeroom').eq('teacher_id', teacherIdToUse),
+            supabase.from('teacher_subjects').select('subject_id').eq('teacher_id', teacherIdToUse)
+          ]);
+
+          if (teacherClassesRes.data) {
+            const classIds = teacherClassesRes.data.map(tc => tc.class_id);
+            setSelectedTeachableClassIds(classIds);
+            const homeroom = teacherClassesRes.data.find(tc => tc.is_homeroom);
+            if (homeroom) setHomeroomClassId(homeroom.class_id);
+          }
+          if (teacherSubjectsRes.data) {
+            setSelectedSubjects(teacherSubjectsRes.data.map(ts => ts.subject_id));
+          }
+        }
       } catch (err: any) {
+        console.error('Error fetching prerequisites:', err);
         setFetchError(err.message || "Failed to load required data.");
       } finally {
         setIsFetchingPrerequisites(false);
@@ -127,51 +144,67 @@ const AddTeacher: React.FC<AddTeacherProps> = ({ profile, prefillProfile }) => {
 
     const teacherData = { 
       ...formData, 
-      id: prefillProfile?.id, // Use the existing profile ID if available
+      
       image_url: imageUrl, 
       staff_id: formData.staff_id || `T-${Date.now()}` 
     };
     
-    // Use upsert to handle both new teachers and those being completed after authorization
     const { data: newTeacher, error: teacherError } = await supabase
       .from('teachers')
-      .upsert(teacherData)
+      .upsert(teacherData, { onConflict: 'email' })
       .select()
       .single();
 
     if (teacherError) {
+      console.error("Failed to add/update teacher:", teacherError);
       setMessage({ type: 'error', text: `Failed to add teacher: ${teacherError.message}` });
       setIsLoading(false);
       return;
     }
 
     let hasErrors = false;
-    // Assign subjects
-    if (newTeacher && selectedSubjects.length > 0) {
-      const teacherSubjects = selectedSubjects.map(subject_id => ({
-        teacher_id: newTeacher.id,
-        subject_id: subject_id,
-        school_id: profile.school_id
-      }));
-      const { error: subjectsError } = await supabase.from('teacher_subjects').insert(teacherSubjects);
-      if (subjectsError) {
-        hasErrors = true;
-        setMessage({ type: 'error', text: `Teacher added, but failed to assign subjects: ${subjectsError.message}` });
+    if (newTeacher) {
+      try {
+        const { error: delSubjError } = await supabase.from('teacher_subjects').delete().eq('teacher_id', newTeacher.id);
+        if (delSubjError) console.error('Error deleting subjects:', delSubjError);
+        if (selectedSubjects.length > 0) {
+          const teacherSubjects = selectedSubjects.map(subject_id => ({
+            teacher_id: newTeacher.id,
+            subject_id: subject_id,
+            school_id: profile.school_id
+          }));
+          const { error: subjectsError } = await supabase.from('teacher_subjects').upsert(teacherSubjects, { onConflict: 'teacher_id,subject_id' });
+          if (subjectsError) {
+            console.error("Error assigning subjects:", subjectsError);
+            hasErrors = true;
+            setMessage({ type: 'error', text: `Teacher added, but failed to assign subjects: ${subjectsError.message}` });
+          }
+        }
+      } catch (err) {
+        console.error("Unexpected error in subject assignment:", err);
       }
     }
 
-    // Assign teachable classes
-    if (newTeacher && selectedTeachableClassIds.length > 0) {
-      const teacherClasses = selectedTeachableClassIds.map(class_id => ({
-        teacher_id: newTeacher.id,
-        class_id: class_id,
-        is_homeroom: class_id === homeroomClassId,
-        school_id: profile.school_id
-      }));
-      const { error: classesError } = await supabase.from('teacher_classes').insert(teacherClasses);
-      if (classesError) {
-        hasErrors = true;
-        setMessage({ type: 'error', text: `Teacher added, but failed to assign classes: ${classesError.message}` });
+    if (newTeacher) {
+      try {
+        const { error: delClassError } = await supabase.from('teacher_classes').delete().eq('teacher_id', newTeacher.id);
+        if (delClassError) console.error('Error deleting classes:', delClassError);
+        if (selectedTeachableClassIds.length > 0) {
+          const teacherClasses = selectedTeachableClassIds.map(class_id => ({
+            teacher_id: newTeacher.id,
+            class_id: class_id,
+            is_homeroom: class_id === homeroomClassId,
+            school_id: profile.school_id
+          }));
+          const { error: classesError } = await supabase.from('teacher_classes').upsert(teacherClasses, { onConflict: 'teacher_id,class_id' });
+          if (classesError) {
+            console.error("Error assigning classes:", classesError);
+            hasErrors = true;
+            setMessage({ type: 'error', text: `Teacher added, but failed to assign classes: ${classesError.message}` });
+          }
+        }
+      } catch (err) {
+        console.error("Unexpected error in class assignment:", err);
       }
     }
 
@@ -213,8 +246,7 @@ const AddTeacher: React.FC<AddTeacherProps> = ({ profile, prefillProfile }) => {
 
           // Added school_id to bulk import data
           newTeachers.push({
-            school_id: profile.school_id,
-            staff_id: staff_id.trim(),
+            school_id: profile.school_id, staff_id: staff_id.trim(),
             full_name: full_name.trim(),
             email: email.trim(),
             date_of_birth: date_of_birth.trim(),
@@ -224,7 +256,7 @@ const AddTeacher: React.FC<AddTeacherProps> = ({ profile, prefillProfile }) => {
         }
 
         if (newTeachers.length > 0) {
-          const { error } = await supabase.from('teachers').insert(newTeachers);
+          const { error } = await supabase.from('teachers').upsert(newTeachers, { onConflict: 'email' });
           if (error) {
             results.failures.push({ row: 0, reason: `Database error: ${error.message}`, data: 'ALL' });
           } else {

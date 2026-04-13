@@ -149,7 +149,8 @@ export type ReportType =
   | 'PaymentHistory'
   | 'ClassList'
   | 'AttendanceReport'
-  | 'TeacherAttendanceReport';
+  | 'TeacherAttendanceReport'
+  | 'PreviousRecords';
 
 export interface TimeSlot {
     id: string;
@@ -306,4 +307,20 @@ export interface ReportDetails {
   headteacher_remarks?: string | null;
   attendance_present?: number | null;
   attendance_total?: number | null;
+}
+
+export interface Feedback {
+  id: string;
+  user_id: string;
+  school_id: string | null;
+  subject: string;
+  message: string;
+  status: 'pending' | 'reviewed' | 'resolved';
+  response: string | null;
+  created_at: string;
+  updated_at: string;
+  user?: {
+    full_name: string;
+    role: string;
+  };
 }

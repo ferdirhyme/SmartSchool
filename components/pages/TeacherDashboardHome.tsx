@@ -15,16 +15,20 @@ interface TeacherDashboardHomeProps {
 }
 
 const Widget: React.FC<{ title: string; children: React.ReactNode; className?: string }> = ({ title, children, className }) => (
-    <div className={`bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md ${className}`}>
-        <h3 className="text-lg font-semibold text-gray-800 dark:text-white mb-4 border-b dark:border-gray-700 pb-2">{title}</h3>
-        {children}
+    <div className={`bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col ${className}`}>
+        <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-6">{title}</h3>
+        <div className="flex-grow">
+            {children}
+        </div>
     </div>
 );
 
 const QuickAction: React.FC<{ title: string; icon: React.FC<{ className?: string }>; onClick: () => void; }> = ({ title, icon: Icon, onClick }) => (
-    <button onClick={onClick} className="flex flex-col items-center justify-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors w-full h-full">
-        <Icon className="w-8 h-8 text-brand-600 dark:text-brand-400 mb-2" />
-        <span className="text-sm font-semibold text-gray-700 dark:text-white text-center">{title}</span>
+    <button onClick={onClick} className="flex flex-col items-center justify-center p-5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl hover:bg-brand-50 dark:hover:bg-gray-700/80 hover:border-brand-200 dark:hover:border-gray-600 transition-all duration-200 group shadow-sm hover:shadow-md w-full h-full">
+        <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded-xl mb-3 group-hover:bg-brand-100 dark:group-hover:bg-brand-900/50 transition-colors">
+            <Icon className="w-7 h-7 text-gray-600 dark:text-gray-300 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors" />
+        </div>
+        <span className="text-sm font-semibold text-gray-700 dark:text-gray-200 text-center group-hover:text-brand-700 dark:group-hover:text-brand-300 transition-colors">{title}</span>
     </button>
 );
 
@@ -129,7 +133,7 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
         };
 
         fetchDashboardData();
-    }, [session.user.id, profile.school_id]);
+    }, [session.user.id, profile.school_id, settings?.id]);
 
     const handleStaffCheckIn = async (bypassLocation = false) => {
         if (!teacherId) {
@@ -433,22 +437,24 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
                     </Widget>
                     <Widget title="Today's Schedule">
                         {schedule.length > 0 ? (
-                            <ul className="space-y-3">
+                            <ul className="space-y-4">
                                 {schedule.map(entry => (
-                                    <li key={entry.id} className="flex items-center space-x-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-md">
+                                    <li key={entry.id} className="flex items-center space-x-5 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700 transition-all hover:shadow-sm">
                                         <div className="text-center w-24 flex-shrink-0">
-                                            <p className="font-semibold text-brand-600 dark:text-brand-400">{formatTime(entry.time_slot?.start_time || '')}</p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400">to {formatTime(entry.time_slot?.end_time || '')}</p>
+                                            <p className="font-bold text-brand-600 dark:text-brand-400">{formatTime(entry.time_slot?.start_time || '')}</p>
+                                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mt-0.5">to {formatTime(entry.time_slot?.end_time || '')}</p>
                                         </div>
-                                        <div className="border-l-2 border-brand-200 dark:border-brand-700 pl-4">
-                                            <p className="font-bold text-gray-800 dark:text-white">{entry.subject?.name || 'Break'}</p>
-                                            <p className="text-sm text-gray-600 dark:text-gray-200">{(entry as any).class?.name || 'Unknown Class'}</p>
+                                        <div className="border-l-2 border-brand-200 dark:border-brand-700/50 pl-5">
+                                            <p className="font-bold text-gray-900 dark:text-white">{entry.subject?.name || 'Break'}</p>
+                                            <p className="text-sm font-medium text-gray-600 dark:text-gray-300 mt-0.5">{(entry as any).class?.name || 'Unknown Class'}</p>
                                         </div>
                                     </li>
                                 ))}
                             </ul>
                         ) : (
-                            <p className="text-gray-500 dark:text-gray-400">You have no classes scheduled for today.</p>
+                            <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">You have no classes scheduled for today.</p>
+                            </div>
                         )}
                     </Widget>
                 </div>
@@ -456,17 +462,17 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
                     {homeroomClass && (
                         <Widget title="Homeroom Attendance">
                             {isAttendanceTaken ? (
-                                <div className="text-center">
-                                    <div className="mx-auto w-16 h-16 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center mb-3">
+                                <div className="text-center p-6 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-100 dark:border-green-800/50">
+                                    <div className="mx-auto w-16 h-16 rounded-full bg-green-100 dark:bg-green-800/50 flex items-center justify-center mb-4">
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
                                     </div>
-                                    <p className="font-semibold text-green-700 dark:text-green-300">Attendance for {homeroomClass.name} has been taken today.</p>
-                                    <button onClick={() => setActivePage('Class Attendance')} className="mt-3 text-sm font-medium text-brand-600 hover:underline">View/Edit</button>
+                                    <p className="font-bold text-green-800 dark:text-green-300">Attendance for {homeroomClass.name} has been taken today.</p>
+                                    <button onClick={() => setActivePage('Class Attendance')} className="mt-4 text-sm font-bold text-brand-600 hover:text-brand-700 dark:text-brand-400 dark:hover:text-brand-300 hover:underline transition-colors">View/Edit Attendance</button>
                                 </div>
                             ) : (
-                                <div className="text-center">
-                                    <p className="mb-4 text-gray-600 dark:text-gray-300">Attendance for <span className="font-bold">{homeroomClass.name}</span> has not been taken.</p>
-                                    <button onClick={() => setActivePage('Class Attendance')} className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-brand-600 hover:bg-brand-700">
+                                <div className="text-center p-6 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800/50">
+                                    <p className="mb-5 text-amber-800 dark:text-amber-300 font-medium">Attendance for <span className="font-bold">{homeroomClass.name}</span> has not been taken.</p>
+                                    <button onClick={() => setActivePage('Class Attendance')} className="w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-sm text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 transition-all active:scale-[0.98]">
                                         Take Attendance Now
                                     </button>
                                 </div>
@@ -475,16 +481,18 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
                     )}
                     <Widget title="School Announcements">
                          {announcements.length > 0 ? (
-                             <ul className="space-y-3">
+                             <ul className="space-y-4">
                                 {announcements.map(ann => (
-                                    <li key={ann.id} className="p-3 bg-blue-50 dark:bg-blue-900/30 rounded-md">
-                                        <p className="text-sm text-blue-800 dark:text-blue-200">{ann.message}</p>
-                                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Expires: {new Date(ann.expiry_date).toLocaleDateString()}</p>
+                                    <li key={ann.id} className="p-4 bg-brand-50 dark:bg-brand-900/20 border border-brand-100 dark:border-brand-800/50 rounded-xl transition-all hover:shadow-sm">
+                                        <p className="text-sm font-medium text-brand-900 dark:text-brand-100 mb-2">{ann.message}</p>
+                                        <p className="text-xs font-semibold text-brand-600 dark:text-brand-400">Expires: {new Date(ann.expiry_date).toLocaleDateString()}</p>
                                     </li>
                                 ))}
                             </ul>
                          ) : (
-                            <p className="text-gray-500 dark:text-gray-400">No active announcements.</p>
+                            <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No active announcements.</p>
+                            </div>
                          )}
                     </Widget>
                 </div>

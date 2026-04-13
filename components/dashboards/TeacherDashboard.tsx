@@ -15,6 +15,7 @@ import SettingsPage from '../pages/SettingsPage.tsx';
 import ReportsPage from '../pages/ReportsPage.tsx';
 import TermRemarks from '../pages/TermRemarks.tsx';
 import BillingPage from '../pages/BillingPage.tsx';
+import FeedbackPage from '../pages/FeedbackPage.tsx';
 
 interface DashboardProps {
   session: Session;
@@ -56,6 +57,8 @@ const TeacherDashboard: React.FC<DashboardProps> = ({ session, profile }) => {
         return <BillingPage session={session} />;
       case 'Profile':
         return <ProfilePage session={session} profile={profile} />;
+      case 'Feedback':
+        return <FeedbackPage session={session} profile={profile} />;
       case 'Settings':
         return <SettingsPage profile={profile} />;
       default:

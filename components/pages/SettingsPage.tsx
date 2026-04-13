@@ -1,5 +1,6 @@
 
 import React, { useState, FormEvent, useEffect } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import { useSettings } from '../../contexts/SettingsContext.tsx';
 import { SchoolSettings, Profile, UserRole } from '../../types.ts';
@@ -46,50 +47,62 @@ ALTER TABLE public.student_assessments ENABLE ROW LEVEL SECURITY;
 -- Add policies for data access
 -- Headteachers get full access
 CREATE POLICY "Allow headteacher full access" ON public.student_assessments
-FOR ALL USING (public.get_auth_role() = 'Headteacher');
+FOR ALL USING (
+  (public.get_auth_role() = 'Headteacher' AND school_id = public.get_my_school_id()) OR
+  public.get_auth_role() = 'Admin'
+);
 
 -- Teachers can manage assessments for students in their assigned subjects (any class) or any subject in their homeroom class
 CREATE POLICY "Allow teachers to manage assessments for their subjects and homeroom" ON public.student_assessments
 FOR ALL USING (
-  public.get_auth_role() = 'Teacher' AND
   (
-    -- Teacher is assigned to this subject
-    EXISTS (
-      SELECT 1 FROM public.teacher_subjects ts
-      WHERE ts.teacher_id = (SELECT id FROM public.teachers WHERE email = (auth.jwt() ->> 'email')) 
-      AND ts.subject_id = student_assessments.subject_id
+    public.get_auth_role() = 'Teacher' AND
+    school_id = public.get_my_school_id() AND
+    (
+      -- Teacher is assigned to this subject
+      EXISTS (
+        SELECT 1 FROM public.teacher_subjects ts
+        WHERE ts.teacher_id = (SELECT id FROM public.teachers WHERE email = (auth.jwt() ->> 'email')) 
+        AND ts.subject_id = student_assessments.subject_id
+      )
+      OR
+      -- Teacher is the homeroom teacher for this class
+      EXISTS (
+        SELECT 1 FROM public.teacher_classes tc
+        WHERE tc.teacher_id = (SELECT id FROM public.teachers WHERE email = (auth.jwt() ->> 'email')) 
+        AND tc.class_id = student_assessments.class_id
+        AND tc.is_homeroom = TRUE
+      )
     )
-    OR
-    -- Teacher is the homeroom teacher for this class
-    EXISTS (
-      SELECT 1 FROM public.teacher_classes tc
-      WHERE tc.teacher_id = (SELECT id FROM public.teachers WHERE email = (auth.jwt() ->> 'email')) 
-      AND tc.class_id = student_assessments.class_id
-      AND tc.is_homeroom = TRUE
-    )
-  )
+  ) OR public.get_auth_role() = 'Admin'
 );
 
 -- Students can view their own assessments by matching admission number
 CREATE POLICY "Allow students to view their own assessments" ON public.student_assessments
 FOR SELECT USING (
-  public.get_auth_role() = 'Student' AND
-  EXISTS (
-    SELECT 1 FROM public.students s
-    WHERE s.id = student_assessments.student_id AND
-    s.admission_number IN (SELECT UNNEST(admission_numbers) FROM public.profiles WHERE id = auth.uid())
-  )
+  (
+    public.get_auth_role() = 'Student' AND
+    school_id = public.get_my_school_id() AND
+    EXISTS (
+      SELECT 1 FROM public.students s
+      WHERE s.id = student_assessments.student_id AND
+      s.admission_number = ANY(COALESCE((SELECT admission_numbers FROM public.profiles WHERE id = auth.uid()), ARRAY[]::text[]))
+    )
+  ) OR public.get_auth_role() = 'Admin'
 );
 
 -- Parents can view assessments of their linked children
 CREATE POLICY "Allow parents to view their wards' assessments" ON public.student_assessments
 FOR SELECT USING (
-  public.get_auth_role() = 'Parent' AND
-  EXISTS (
-    SELECT 1 FROM public.students s
-    WHERE s.id = student_assessments.student_id AND
-    s.admission_number IN (SELECT UNNEST(admission_numbers) FROM public.profiles WHERE id = auth.uid())
-  )
+  (
+    public.get_auth_role() = 'Parent' AND
+    school_id = public.get_my_school_id() AND
+    EXISTS (
+      SELECT 1 FROM public.students s
+      WHERE s.id = student_assessments.student_id AND
+      s.admission_number = ANY(COALESCE((SELECT admission_numbers FROM public.profiles WHERE id = auth.uid()), ARRAY[]::text[]))
+    )
+  ) OR public.get_auth_role() = 'Admin'
 );
 
 -- Grant necessary permissions to roles
@@ -99,6 +112,16 @@ GRANT ALL ON TABLE public.student_assessments TO authenticated, service_role;
 const helperFunctionsSqlScript = `
 -- This script bundles several helper functions and schema updates to resolve common permission and lookup issues.
 -- It is safe to run this script multiple times.
+
+-- === Storage Setup: Ensure avatars bucket is public ===
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+-- Allow anyone to read from avatars bucket
+DROP POLICY IF EXISTS "Anyone can view avatars" ON storage.objects;
+CREATE POLICY "Anyone can view avatars" ON storage.objects
+FOR SELECT USING (bucket_id = 'avatars');
 
 -- === Schema Update: Ensure Schools and School Settings tables exist ===
 DO $$ BEGIN
@@ -119,6 +142,9 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     avatar_url TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Ensure credit_balance exists if table was created earlier
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS credit_balance DECIMAL(12,2) DEFAULT 0.00;
 
 -- Ensure email and avatar_url columns exist if table was created earlier
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS email TEXT;
@@ -176,7 +202,7 @@ ALTER TABLE public.school_settings ADD COLUMN IF NOT EXISTS school_longitude NUM
 CREATE OR REPLACE FUNCTION public.get_auth_role()
 RETURNS text AS $$
   SELECT role::text FROM public.profiles WHERE id = auth.uid();
-$$ LANGUAGE sql STABLE SECURITY DEFINER;
+$$ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public;
 
 -- === Helper Function: Get user school_id with Parent/Admin fallback ===
 CREATE OR REPLACE FUNCTION public.get_my_school_id()
@@ -190,39 +216,68 @@ BEGIN
   -- 2. If still null, try to find via teachers table (for teachers)
   IF sid IS NULL THEN
     SELECT school_id INTO sid FROM public.teachers 
-    WHERE email = (auth.jwt() ->> 'email')
+    WHERE lower(email) = lower(auth.jwt() ->> 'email')
     LIMIT 1;
   END IF;
 
   -- 3. If Parent, try to find via wards
   IF sid IS NULL AND (SELECT role::text FROM public.profiles WHERE id = auth.uid()) = 'Parent' THEN
     SELECT school_id INTO sid FROM public.students 
-    WHERE admission_number = ANY(SELECT UNNEST(admission_numbers) FROM public.profiles WHERE id = auth.uid())
+    WHERE admission_number = ANY(SELECT (SELECT admission_numbers FROM public.profiles WHERE id = auth.uid()))
     LIMIT 1;
   END IF;
   
-  -- 3. If Admin, just return the first school for settings lookup (optional)
+  -- 4. If Admin, just return the first school for settings lookup (optional)
   IF sid IS NULL AND (SELECT role::text FROM public.profiles WHERE id = auth.uid()) = 'Admin' THEN
     SELECT id INTO sid FROM public.schools LIMIT 1;
   END IF;
   
   RETURN sid;
 END;
-$$ LANGUAGE plpgsql STABLE SECURITY DEFINER;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
 
 -- === Auth Trigger: Automatically create profile on signup ===
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  assigned_role public.user_role;
 BEGIN
+  -- 1. Determine Role Securely
+  IF new.email IN ('ferditgh@gmail.com', 'ferdagbatey@gmail.com') THEN
+    assigned_role := 'Admin'::public.user_role;
+  ELSE
+    assigned_role := (COALESCE(new.raw_user_meta_data->>'role', 'Teacher'))::public.user_role;
+  END IF;
+
+  -- 2. Create Profile (If this fails, the whole signup rolls back)
   INSERT INTO public.profiles (id, full_name, email, role, is_onboarded)
   VALUES (
     new.id, 
     COALESCE(new.raw_user_meta_data->>'full_name', 'New User'), 
     new.email,
-    (COALESCE(new.raw_user_meta_data->>'role', 'Teacher'))::public.user_role, 
+    assigned_role, 
     FALSE
   )
   ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email;
+
+  -- 3. Auto-populate teachers table if applicable (Only for Headteachers)
+  IF assigned_role = 'Headteacher' THEN
+    INSERT INTO public.teachers (full_name, email, staff_id, date_of_birth, rank, phone_number)
+    VALUES (
+      COALESCE(new.raw_user_meta_data->>'full_name', 'New User'),
+      new.email,
+      CASE 
+        WHEN new.raw_user_meta_data->>'staff_id' IS NULL OR new.raw_user_meta_data->>'staff_id' = '' 
+        THEN 'STAFF-' || substr(md5(new.id::text), 1, 8)
+        ELSE new.raw_user_meta_data->>'staff_id'
+      END,
+      '1970-01-01'::DATE,
+      assigned_role::text,
+      '0000000000'
+    )
+    ON CONFLICT (staff_id) DO NOTHING;
+  END IF;
+
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -252,11 +307,35 @@ CREATE OR REPLACE FUNCTION public.get_teacher_id_by_auth_email()
 RETURNS UUID AS $$
 DECLARE
   teacher_record_id UUID;
+  user_role TEXT;
+  u_email TEXT;
+  u_name TEXT;
+  u_school_id UUID;
 BEGIN
+  u_email := auth.jwt() ->> 'email';
+  
   -- Securely finds the teacher's profile ID using the email of the logged-in user.
-  SELECT id INTO teacher_record_id
-  FROM public.teachers
-  WHERE email = (auth.jwt() ->> 'email');
+  -- Works for both 'Teacher' and 'Headteacher' roles.
+  SELECT role::text, full_name, school_id INTO user_role, u_name, u_school_id FROM public.profiles WHERE id = auth.uid();
+  
+  IF user_role IN ('Teacher', 'Headteacher') THEN
+    SELECT id INTO teacher_record_id
+    FROM public.teachers
+    WHERE email = u_email;
+    
+    -- Auto-insert if missing (e.g. if role was assigned after signup)
+    IF teacher_record_id IS NULL THEN
+      INSERT INTO public.teachers (full_name, email, staff_id, school_id)
+      VALUES (
+        COALESCE(u_name, 'Staff Member'), 
+        u_email, 
+        'STAFF-' || substr(md5(auth.uid()::text), 1, 8), 
+        u_school_id
+      )
+      ON CONFLICT (staff_id) DO UPDATE SET email = EXCLUDED.email
+      RETURNING id INTO teacher_record_id;
+    END IF;
+  END IF;
   
   RETURN teacher_record_id;
 END;
@@ -287,6 +366,17 @@ GRANT EXECUTE ON FUNCTION public.execute_admin_sql(sql_script TEXT) TO authentic
 -- This function automatically tops up a user's credit balance when a successful transaction is inserted.
 -- This replaces the need for a separate Edge Function, keeping logic in the DB.
 
+CREATE TABLE IF NOT EXISTS public.transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    amount DECIMAL(12,2) NOT NULL,
+    reference TEXT UNIQUE NOT NULL,
+    status TEXT CHECK (status IN ('pending', 'success', 'failed')),
+    gateway TEXT
+);
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+
 CREATE OR REPLACE FUNCTION public.handle_new_transaction_balance()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -312,6 +402,10 @@ EXECUTE FUNCTION public.handle_new_transaction_balance();
 DROP POLICY IF EXISTS "Users can insert their own transactions" ON public.transactions;
 CREATE POLICY "Users can insert their own transactions" ON public.transactions
 FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can view their own transactions" ON public.transactions;
+CREATE POLICY "Users can view their own transactions" ON public.transactions
+FOR SELECT USING (auth.uid() = user_id);
 
 -- === Schema Update: Create teacher_attendance table ===
 CREATE TABLE IF NOT EXISTS public.teacher_attendance (
@@ -341,7 +435,8 @@ ALTER TABLE public.schools ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Headteachers can manage their school" ON public.schools;
 CREATE POLICY "Headteachers can manage their school" ON public.schools
 FOR ALL USING (
-  public.get_auth_role() = 'Headteacher'
+  (public.get_auth_role() = 'Headteacher' AND id = public.get_my_school_id()) OR
+  public.get_auth_role() = 'Admin'
 );
 
 DROP POLICY IF EXISTS "Admins can manage all schools" ON public.schools;
@@ -353,18 +448,26 @@ FOR ALL USING (
 DROP POLICY IF EXISTS "Users can view their school" ON public.schools;
 CREATE POLICY "Users can view their school" ON public.schools
 FOR SELECT USING (
-  id = public.get_my_school_id()
+  id = public.get_my_school_id() OR
+  public.get_auth_role() = 'Admin'
 );
 
 -- Policies for teacher_attendance
 DROP POLICY IF EXISTS "Headteachers can manage all staff attendance" ON public.teacher_attendance;
 CREATE POLICY "Headteachers can manage all staff attendance" ON public.teacher_attendance
-FOR ALL USING (public.get_auth_role() = 'Headteacher');
+FOR ALL USING (
+  (public.get_auth_role() = 'Headteacher' AND school_id = public.get_my_school_id()) OR
+  public.get_auth_role() = 'Admin'
+);
 
 DROP POLICY IF EXISTS "Teachers can manage their own attendance" ON public.teacher_attendance;
 CREATE POLICY "Teachers can manage their own attendance" ON public.teacher_attendance
 FOR ALL USING (
-  teacher_id IN (SELECT id FROM public.teachers WHERE email = (auth.jwt() ->> 'email'))
+  (
+    public.get_auth_role() = 'Teacher' AND
+    school_id = public.get_my_school_id() AND
+    teacher_id IN (SELECT id FROM public.teachers WHERE email = (auth.jwt() ->> 'email'))
+  ) OR public.get_auth_role() = 'Admin'
 );
 
 -- Policies for school_settings
@@ -372,20 +475,28 @@ DROP POLICY IF EXISTS "Users can view their school settings" ON public.school_se
 CREATE POLICY "Users can view their school settings" ON public.school_settings 
 FOR SELECT USING (
   id = public.get_my_school_id() OR
+  public.get_auth_role() = 'Admin' OR
   (
     public.get_auth_role() = 'Parent' AND
     EXISTS (
       SELECT 1 FROM public.students s
       WHERE s.school_id = school_settings.id AND
-      s.admission_number IN (SELECT UNNEST(admission_numbers) FROM public.profiles WHERE id = auth.uid())
+      s.admission_number = ANY(COALESCE((SELECT admission_numbers FROM public.profiles WHERE id = auth.uid()), ARRAY[]::text[]))
     )
   )
 );
 
 DROP POLICY IF EXISTS "Headteachers can manage their school settings" ON public.school_settings;
+
+DROP POLICY IF EXISTS "Headteachers can insert their school settings" ON public.school_settings;
+DROP POLICY IF EXISTS "Headteachers can update their school settings" ON public.school_settings;
+DROP POLICY IF EXISTS "Headteachers can delete their school settings" ON public.school_settings;
+
 CREATE POLICY "Headteachers can manage their school settings" ON public.school_settings
 FOR ALL USING (
-  public.get_auth_role() = 'Headteacher'
+  public.get_auth_role() IN ('Headteacher', 'Admin')
+) WITH CHECK (
+  public.get_auth_role() IN ('Headteacher', 'Admin')
 );
 
 DROP POLICY IF EXISTS "Admins can manage all school settings" ON public.school_settings;
@@ -421,6 +532,10 @@ DROP POLICY IF EXISTS "Admins can update all profiles" ON public.profiles;
 CREATE POLICY "Admins can update all profiles" ON public.profiles 
 FOR UPDATE USING (public.get_auth_role() = 'Admin');
 
+DROP POLICY IF EXISTS "Users can update own profile" ON public.profiles;
+CREATE POLICY "Users can update own profile" ON public.profiles 
+FOR UPDATE USING (auth.uid() = id);
+
 DROP POLICY IF EXISTS "Headteachers can view profiles in their school" ON public.profiles;
 CREATE POLICY "Headteachers can view profiles in their school" ON public.profiles 
 FOR SELECT USING (
@@ -438,7 +553,8 @@ FOR UPDATE USING (
 DROP POLICY IF EXISTS "Users can view profiles in their school" ON public.profiles;
 CREATE POLICY "Users can view profiles in their school" ON public.profiles 
 FOR SELECT USING (
-  school_id = public.get_my_school_id()
+  school_id = public.get_my_school_id() OR
+  public.get_auth_role() = 'Admin'
 );
 
 GRANT ALL ON TABLE public.profiles TO authenticated, service_role;
@@ -457,6 +573,43 @@ END $$;
 -- Add school_id to link tables if missing to allow RLS
 ALTER TABLE public.teacher_classes ADD COLUMN IF NOT EXISTS school_id UUID REFERENCES public.schools(id) ON DELETE CASCADE;
 ALTER TABLE public.teacher_subjects ADD COLUMN IF NOT EXISTS school_id UUID REFERENCES public.schools(id) ON DELETE CASCADE;
+
+-- Populate school_id for existing rows from teachers table
+UPDATE public.teacher_classes tc
+SET school_id = t.school_id
+FROM public.teachers t
+WHERE tc.teacher_id = t.id AND tc.school_id IS NULL;
+
+UPDATE public.teacher_subjects ts
+SET school_id = t.school_id
+FROM public.teachers t
+WHERE ts.teacher_id = t.id AND ts.school_id IS NULL;
+
+-- Populate school_id for student related tables
+UPDATE public.student_attendance sa
+SET school_id = s.school_id
+FROM public.students s
+WHERE sa.student_id = s.id AND sa.school_id IS NULL;
+
+UPDATE public.student_assessments sa
+SET school_id = s.school_id
+FROM public.students s
+WHERE sa.student_id = s.id AND sa.school_id IS NULL;
+
+UPDATE public.student_term_reports str
+SET school_id = s.school_id
+FROM public.students s
+WHERE str.student_id = s.id AND str.school_id IS NULL;
+
+-- Ensure unique constraints include school_id for multi-tenancy upserts
+ALTER TABLE public.student_assessments DROP CONSTRAINT IF EXISTS student_assessments_student_id_class_id_subject_id_term_year_key;
+ALTER TABLE public.student_assessments ADD CONSTRAINT student_assessments_composite_key UNIQUE(school_id, student_id, class_id, subject_id, term, year);
+
+ALTER TABLE public.student_term_reports DROP CONSTRAINT IF EXISTS student_term_reports_student_id_term_year_key;
+ALTER TABLE public.student_term_reports ADD CONSTRAINT student_term_reports_composite_key UNIQUE(school_id, student_id, class_id, term, year);
+
+ALTER TABLE public.student_attendance DROP CONSTRAINT IF EXISTS student_attendance_student_id_attendance_date_key;
+ALTER TABLE public.student_attendance ADD CONSTRAINT student_attendance_composite_key UNIQUE(school_id, student_id, attendance_date);
 
 -- === Comprehensive RLS Policies for All Tables ===
 -- This section ensures Headteachers and Teachers can manage their school's data.
@@ -481,50 +634,91 @@ BEGIN
         EXECUTE format('DROP POLICY IF EXISTS "Headteachers manage school data" ON public.%I', t);
         EXECUTE format('DROP POLICY IF EXISTS "Teachers view school data" ON public.%I', t);
         EXECUTE format('DROP POLICY IF EXISTS "Users view school data" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Teachers manage their assigned assessments" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Users view teachers" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Teachers view own record" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Teachers update own profile" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Headteachers manage teachers" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Teachers can view colleagues and manage own profile" ON public.%I', t);
+        EXECUTE format('DROP POLICY IF EXISTS "Teachers manage school data" ON public.%I', t);
         
         -- Policy: Headteachers have full access to their school's data
         EXECUTE format('
             CREATE POLICY "Headteachers manage school data" ON public.%I
             FOR ALL USING (
-                public.get_auth_role() = ''Headteacher'' AND
-                school_id = public.get_my_school_id()
+                (public.get_auth_role() = ''Headteacher'' AND school_id = public.get_my_school_id()) OR
+                public.get_auth_role() = ''Admin''
             )
         ', t);
 
         -- Policy: Teachers manage school data
-        -- Special handling for student_assessments to restrict to assigned subjects/classes
+        -- Special handling for student_assessments and teachers
         IF t = 'student_assessments' THEN
             EXECUTE format('
                 CREATE POLICY "Teachers manage their assigned assessments" ON public.student_assessments
                 FOR ALL USING (
-                    public.get_auth_role() = ''Teacher'' AND
-                    school_id = public.get_my_school_id() AND
                     (
-                        -- Teacher is assigned to this subject
-                        EXISTS (
-                            SELECT 1 FROM public.teacher_subjects ts
-                            JOIN public.teachers tech ON tech.id = ts.teacher_id
-                            WHERE tech.email = (auth.jwt() ->> ''email'')
-                            AND ts.subject_id = student_assessments.subject_id
+                        public.get_auth_role() = ''Teacher'' AND
+                        school_id = public.get_my_school_id() AND
+                        (
+                            -- Teacher is assigned to this subject
+                            EXISTS (
+                                SELECT 1 FROM public.teacher_subjects ts
+                                JOIN public.teachers tech ON tech.id = ts.teacher_id
+                                WHERE tech.email = (auth.jwt() ->> ''email'')
+                                AND ts.subject_id = student_assessments.subject_id
+                            )
+                            OR
+                            -- Teacher is the homeroom teacher for this class (can manage all subjects)
+                            EXISTS (
+                                SELECT 1 FROM public.teacher_classes tc
+                                JOIN public.teachers tech ON tech.id = tc.teacher_id
+                                WHERE tech.email = (auth.jwt() ->> ''email'')
+                                AND tc.class_id = student_assessments.class_id
+                                AND tc.is_homeroom = TRUE
+                            )
                         )
-                        OR
-                        -- Teacher is the homeroom teacher for this class (can manage all subjects)
-                        EXISTS (
-                            SELECT 1 FROM public.teacher_classes tc
-                            JOIN public.teachers tech ON tech.id = tc.teacher_id
-                            WHERE tech.email = (auth.jwt() ->> ''email'')
-                            AND tc.class_id = student_assessments.class_id
-                            AND tc.is_homeroom = TRUE
-                        )
-                    )
+                    ) OR public.get_auth_role() = ''Admin''
+                )
+            ');
+        ELSIF t = 'teachers' THEN
+            -- Teachers can view all colleagues in their school
+            EXECUTE format('
+                CREATE POLICY "Users view teachers" ON public.teachers
+                FOR SELECT USING (
+                    school_id = public.get_my_school_id() OR
+                    public.get_auth_role() = ''Admin''
+                )
+            ');
+            -- Teachers can view their own record by email
+            EXECUTE format('
+                CREATE POLICY "Teachers view own record" ON public.teachers
+                FOR SELECT USING (
+                    lower(email) = lower(auth.jwt() ->> ''email'')
+                )
+            ');
+            -- Teachers can only update their own profile
+            EXECUTE format('
+                CREATE POLICY "Teachers update own profile" ON public.teachers
+                FOR UPDATE USING (
+                    (public.get_auth_role() = ''Teacher'' AND email = (auth.jwt() ->> ''email'')) OR
+                    public.get_auth_role() IN (''Headteacher'', ''Admin'')
+                )
+            ');
+            -- Headteachers and Admins can manage all teachers in the school
+            EXECUTE format('
+                CREATE POLICY "Headteachers manage teachers" ON public.teachers
+                FOR ALL USING (
+                    (public.get_auth_role() = ''Headteacher'' AND school_id = public.get_my_school_id()) OR
+                    public.get_auth_role() = ''Admin''
                 )
             ');
         ELSE
             EXECUTE format('
                 CREATE POLICY "Teachers manage school data" ON public.%I
                 FOR ALL USING (
-                    public.get_auth_role() = ''Teacher'' AND
-                    school_id = public.get_my_school_id()
+                    (public.get_auth_role() = ''Teacher'' AND school_id = public.get_my_school_id()) OR
+                    public.get_auth_role() = ''Admin''
                 )
             ', t);
         END IF;
@@ -533,7 +727,8 @@ BEGIN
         EXECUTE format('
             CREATE POLICY "Users view school data" ON public.%I
             FOR SELECT USING (
-                school_id = public.get_my_school_id()
+                school_id = public.get_my_school_id() OR
+                public.get_auth_role() = ''Admin''
             )
         ', t);
 
@@ -556,8 +751,15 @@ CREATE TABLE IF NOT EXISTS public.conversations (
 );
 
 -- Defensive check: Ensure columns exist if table was created earlier
-ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS is_group BOOLEAN DEFAULT FALSE;
-ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS group_name TEXT;
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='conversations' AND column_name='is_group') THEN
+        ALTER TABLE public.conversations ADD COLUMN is_group BOOLEAN DEFAULT FALSE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='conversations' AND column_name='group_name') THEN
+        ALTER TABLE public.conversations ADD COLUMN group_name TEXT;
+    END IF;
+END $$;
 
 -- 2. Messages Table
 CREATE TABLE IF NOT EXISTS public.messages (
@@ -668,51 +870,9 @@ CREATE TABLE IF NOT EXISTS public.student_term_reports (
 );
 ALTER TABLE public.student_term_reports ADD COLUMN IF NOT EXISTS school_id UUID REFERENCES public.schools(id) ON DELETE CASCADE;
 
--- 4. Enable RLS and Apply Policies
-DO $$
-DECLARE
-    t text;
-    tables_to_secure text[] := ARRAY['student_attendance', 'student_assessments', 'student_term_reports'];
-BEGIN
-    FOREACH t IN ARRAY tables_to_secure LOOP
-        -- Enable RLS
-        EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
-        
-        -- Drop existing policies
-        EXECUTE format('DROP POLICY IF EXISTS "Headteachers manage school data" ON public.%I', t);
-        EXECUTE format('DROP POLICY IF EXISTS "Teachers manage school data" ON public.%I', t);
-        EXECUTE format('DROP POLICY IF EXISTS "Users view school data" ON public.%I', t);
-        
-        -- Policy: Headteachers full access
-        EXECUTE format('
-            CREATE POLICY "Headteachers manage school data" ON public.%I
-            FOR ALL USING (
-                public.get_auth_role() = ''Headteacher'' AND
-                school_id = public.get_my_school_id()
-            )
-        ', t);
-
-        -- Policy: Teachers full access
-        EXECUTE format('
-            CREATE POLICY "Teachers manage school data" ON public.%I
-            FOR ALL USING (
-                public.get_auth_role() = ''Teacher'' AND
-                school_id = public.get_my_school_id()
-            )
-        ', t);
-
-        -- Policy: Users view access
-        EXECUTE format('
-            CREATE POLICY "Users view school data" ON public.%I
-            FOR SELECT USING (
-                school_id = public.get_my_school_id()
-            )
-        ', t);
-
-        -- Grant permissions
-        EXECUTE format('GRANT ALL ON TABLE public.%I TO authenticated, service_role', t);
-    END LOOP;
-END $$;
+GRANT ALL ON TABLE public.student_attendance TO authenticated, service_role;
+GRANT ALL ON TABLE public.student_assessments TO authenticated, service_role;
+GRANT ALL ON TABLE public.student_term_reports TO authenticated, service_role;
 `.trim();
 
 const notificationsSqlScript = `
@@ -800,8 +960,8 @@ BEGIN
         EXECUTE format('
             CREATE POLICY "Headteachers manage school data" ON public.%I
             FOR ALL USING (
-                public.get_auth_role() = ''Headteacher'' AND
-                school_id = public.get_my_school_id()
+                (public.get_auth_role() = ''Headteacher'' AND school_id = public.get_my_school_id()) OR
+                public.get_auth_role() = ''Admin''
             )
         ', t);
 
@@ -809,8 +969,17 @@ BEGIN
         EXECUTE format('
             CREATE POLICY "Teachers manage school data" ON public.%I
             FOR ALL USING (
-                public.get_auth_role() = ''Teacher'' AND
-                school_id = public.get_my_school_id()
+                (public.get_auth_role() = ''Teacher'' AND school_id = public.get_my_school_id()) OR
+                public.get_auth_role() = ''Admin''
+            )
+        ', t);
+
+        -- Policy: Users view school data
+        EXECUTE format('
+            CREATE POLICY "Users view school data" ON public.%I
+            FOR SELECT USING (
+                school_id = public.get_my_school_id() OR
+                public.get_auth_role() = ''Admin''
             )
         ', t);
 
@@ -818,6 +987,44 @@ BEGIN
         EXECUTE format('GRANT ALL ON TABLE public.%I TO authenticated, service_role', t);
     END LOOP;
 END $$;
+`.trim();
+
+const feedbackSqlScript = `
+-- === Feedback Schema Setup ===
+
+CREATE TABLE IF NOT EXISTS public.feedback (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    school_id UUID REFERENCES public.schools(id) ON DELETE CASCADE,
+    subject TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'resolved')),
+    response TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Enable Row Level Security
+ALTER TABLE public.feedback ENABLE ROW LEVEL SECURITY;
+
+-- Admins can view and respond to all feedback
+DROP POLICY IF EXISTS "Admins manage all feedback" ON public.feedback;
+CREATE POLICY "Admins manage all feedback" ON public.feedback
+FOR ALL USING (public.get_auth_role() = 'Admin');
+
+-- Users can view and create their own feedback
+DROP POLICY IF EXISTS "Users manage own feedback" ON public.feedback;
+CREATE POLICY "Users manage own feedback" ON public.feedback
+FOR SELECT USING (user_id = auth.uid());
+
+CREATE POLICY "Users create own feedback" ON public.feedback
+FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users update own feedback" ON public.feedback
+FOR UPDATE USING (user_id = auth.uid());
+
+-- Grant permissions
+GRANT ALL ON TABLE public.feedback TO authenticated, service_role;
 `.trim();
 
 
@@ -845,43 +1052,43 @@ const ScriptBlock: React.FC<ScriptBlockProps> = ({ title, warning, instructions,
         });
     };
     
-    const borderColor = isDestructive ? 'border-red-300 dark:border-red-700' : 'border-yellow-300 dark:border-yellow-700';
-    const bgColor = isDestructive ? 'bg-red-50 dark:bg-red-900/20' : 'bg-yellow-50 dark:bg-yellow-900/20';
-    const titleColor = isDestructive ? 'text-red-800 dark:text-red-300' : 'text-yellow-800 dark:text-yellow-300';
-    const textColor = isDestructive ? 'text-red-700 dark:text-red-300' : 'text-yellow-700 dark:text-yellow-300';
-    const strongColor = isDestructive ? 'text-red-800 dark:text-red-200' : 'text-yellow-800 dark:text-yellow-200';
-    const runButtonColor = isDestructive ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-700';
+    const borderColor = isDestructive ? 'border-red-200 dark:border-red-800/50' : 'border-amber-200 dark:border-amber-800/50';
+    const bgColor = isDestructive ? 'bg-red-50 dark:bg-red-900/10' : 'bg-amber-50 dark:bg-amber-900/10';
+    const titleColor = isDestructive ? 'text-red-800 dark:text-red-300' : 'text-amber-800 dark:text-amber-300';
+    const textColor = isDestructive ? 'text-red-700 dark:text-red-400/90' : 'text-amber-700 dark:text-amber-400/90';
+    const strongColor = isDestructive ? 'text-red-900 dark:text-red-200' : 'text-amber-900 dark:text-amber-200';
+    const runButtonColor = isDestructive ? 'bg-red-600 hover:bg-red-700' : 'bg-amber-600 hover:bg-amber-700';
 
     return (
-        <div className={`p-6 border ${borderColor} ${bgColor} rounded-lg`}>
-            <h2 className={`text-xl font-semibold ${titleColor} mb-4`}>{title}</h2>
-            <div className={`${textColor} mb-4 space-y-3`}>
+        <div className={`p-8 border ${borderColor} ${bgColor} rounded-2xl shadow-sm`}>
+            <h2 className={`text-xl font-bold ${titleColor} mb-4`}>{title}</h2>
+            <div className={`${textColor} mb-6 space-y-3 font-medium`}>
                 {warning}
             </div>
-            <div className="mb-4">
-                <h3 className={`font-semibold mb-2 ${strongColor}`}>Instructions:</h3>
+            <div className="mb-6">
+                <h3 className={`font-bold mb-2 ${strongColor}`}>Instructions:</h3>
                 {instructions}
             </div>
             <div className="relative group">
                 <textarea
                     readOnly
                     value={script}
-                    className="w-full h-64 p-3 font-mono text-sm bg-gray-900 text-gray-200 rounded-md border border-gray-600 focus:outline-none"
+                    className="w-full h-64 p-4 font-mono text-sm bg-gray-900 text-gray-200 rounded-xl border border-gray-800 focus:outline-none shadow-inner custom-scrollbar"
                 />
-                 <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                 <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                         onClick={handleCopy}
-                        className="px-3 py-1 text-xs font-semibold text-white bg-gray-600 rounded-md hover:bg-gray-700"
+                        className="px-4 py-1.5 text-xs font-bold text-white bg-gray-700/80 backdrop-blur-sm rounded-lg hover:bg-gray-600 transition-colors"
                     >
                         {copyButtonText}
                     </button>
                 </div>
             </div>
-            <div className="mt-4 flex justify-end">
+            <div className="mt-6 flex justify-end">
                 <button
                     onClick={() => onRun(script)}
                     disabled={isRunning}
-                    className={`flex items-center justify-center px-4 py-2 text-sm font-medium text-white rounded-md disabled:opacity-50 ${runButtonColor}`}
+                    className={`flex items-center justify-center px-6 py-2.5 text-sm font-bold text-white rounded-xl disabled:opacity-50 transition-all active:scale-[0.98] shadow-sm ${runButtonColor}`}
                 >
                     {isRunning ? (
                         <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -900,24 +1107,30 @@ const ConfirmationModal: React.FC<{ onConfirm: () => void; onCancel: () => void;
     const canConfirm = confirmText === 'DELETE';
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60" onClick={onCancel}>
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg p-6" onClick={e => e.stopPropagation()}>
-                <h2 className="text-2xl font-bold text-red-600 dark:text-red-400 mb-4">Warning: Destructive Action</h2>
-                <p className="text-gray-700 dark:text-gray-300 mb-4">
-                    You are about to run a script that will <strong className="font-bold underline">permanently delete all student assessment data</strong>. This action cannot be undone.
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-sm p-4" onClick={onCancel}>
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-lg p-8 border border-gray-100 dark:border-gray-700" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 mb-6">
+                    <svg className="w-6 h-6 text-red-600 dark:text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Warning: Destructive Action</h2>
+                <p className="text-gray-600 dark:text-gray-400 mb-4 font-medium">
+                    You are about to run a script that will <strong className="font-bold text-red-600 dark:text-red-400">permanently delete all student assessment data</strong>. This action cannot be undone.
                 </p>
-                <p className="text-gray-700 dark:text-gray-300 mb-6">
-                    To proceed, please type <code className="font-mono bg-gray-200 dark:bg-gray-900 px-1 py-0.5 rounded">DELETE</code> into the box below.
+                <p className="text-gray-600 dark:text-gray-400 mb-6 font-medium">
+                    To proceed, please type <code className="font-mono font-bold text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2 py-1 rounded-md">DELETE</code> into the box below.
                 </p>
                 <input
                     type="text"
                     value={confirmText}
                     onChange={(e) => setConfirmText(e.target.value)}
-                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md mb-6 dark:bg-gray-700"
+                    className="w-full p-3 border border-gray-200 dark:border-gray-600 rounded-xl mb-8 dark:bg-gray-700/50 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none transition-all"
+                    placeholder="Type DELETE to confirm"
                 />
-                <div className="flex justify-end gap-4">
-                    <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">Cancel</button>
-                    <button onClick={onConfirm} disabled={!canConfirm || isRunning} className="px-4 py-2 bg-red-600 text-white rounded-md disabled:bg-red-400 disabled:cursor-not-allowed">
+                <div className="flex justify-end gap-3">
+                    <button onClick={onCancel} className="px-5 py-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-bold rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">Cancel</button>
+                    <button onClick={onConfirm} disabled={!canConfirm || isRunning} className="px-5 py-2.5 bg-red-600 text-white font-bold rounded-xl disabled:bg-red-400 dark:disabled:bg-red-800 disabled:cursor-not-allowed hover:bg-red-700 transition-colors shadow-sm">
                         {isRunning ? 'Running...' : 'Confirm & Delete Data'}
                     </button>
                 </div>
@@ -1011,6 +1224,20 @@ const AdvancedSettings: React.FC = () => {
             />
 
             <ScriptBlock
+                title="3. Feedback Setup"
+                isDestructive={false}
+                warning={
+                     <p>
+                        Run this script to create the tables required for managing user feedback and suggestions.
+                    </p>
+                }
+                instructions={commonInstructions}
+                script={feedbackSqlScript}
+                onRun={(script) => triggerRun(script, false)}
+                isRunning={isScriptRunning}
+            />
+
+            <ScriptBlock
                 title="3. Messaging Setup"
                 isDestructive={false}
                 warning={
@@ -1082,6 +1309,8 @@ const UserSettings: React.FC = () => {
     const { theme, setTheme } = useSettings();
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -1109,53 +1338,73 @@ const UserSettings: React.FC = () => {
         setIsSaving(false);
     };
     
-    const inputClasses = "block w-full p-3 bg-gray-50 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-400";
+    const inputClasses = "block w-full p-3 bg-gray-50 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 dark:bg-gray-800/50 dark:border-gray-700 dark:text-white dark:placeholder-gray-500 transition-all";
 
     return (
         <div className="space-y-8">
             {message && (
-                <div className={`p-4 rounded-md ${message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                <div className={`p-4 rounded-xl border ${message.type === 'success' ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800/50 dark:text-green-300' : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800/50 dark:text-red-300'}`}>
                     {message.text}
                 </div>
             )}
-            <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">Appearance</h2>
-                <div className="flex items-center justify-between">
+            <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">Appearance</h2>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div>
-                        <h3 className="font-medium text-gray-900 dark:text-white">Theme</h3>
-                        <p className="text-sm text-gray-600 dark:text-gray-400">Choose how SmartSchool looks to you. Your preference is saved locally.</p>
+                        <h3 className="font-semibold text-gray-900 dark:text-white">Theme Preference</h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Choose how SmartSchool looks to you. Your preference is saved locally.</p>
                     </div>
-                    <div className="flex items-center space-x-2 rounded-lg bg-gray-100 dark:bg-gray-900 p-1">
-                        <button onClick={() => setTheme('light')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${theme === 'light' ? 'bg-white dark:bg-gray-700 shadow text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}>Light</button>
-                        <button onClick={() => setTheme('dark')} className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${theme === 'dark' ? 'bg-white dark:bg-gray-700 shadow text-gray-800 dark:text-gray-100' : 'text-gray-500'}`}>Dark</button>
+                    <div className="flex items-center space-x-1 rounded-xl bg-gray-100 dark:bg-gray-900 p-1.5 border border-gray-200 dark:border-gray-800">
+                        <button onClick={() => setTheme('light')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${theme === 'light' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>Light</button>
+                        <button onClick={() => setTheme('dark')} className={`px-5 py-2 rounded-lg text-sm font-bold transition-all ${theme === 'dark' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}>Dark</button>
                     </div>
                 </div>
             </div>
 
-            <form onSubmit={handleChangePassword} className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">Change Password</h2>
-                <div className="space-y-4 max-w-md">
+            <form onSubmit={handleChangePassword} className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">Change Password</h2>
+                <div className="space-y-5 max-w-md">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password</label>
-                        <input type="password" value={password} onChange={e => setPassword(e.target.value)} className={inputClasses} placeholder="8+ characters" />
+                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">New Password</label>
+                        <div className="relative">
+                            <input type={showPassword ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} className={`${inputClasses} pr-10`} placeholder="8+ characters" />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none transition-colors"
+                            >
+                                {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                            </button>
+                        </div>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Confirm New Password</label>
-                        <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className={inputClasses} placeholder="••••••••" />
+                        <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Confirm New Password</label>
+                        <div className="relative">
+                            <input type={showConfirmPassword ? "text" : "password"} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className={`${inputClasses} pr-10`} placeholder="••••••••" />
+                            <button
+                                type="button"
+                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none transition-colors"
+                            >
+                                {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                            </button>
+                        </div>
                     </div>
                 </div>
-                <div className="flex justify-end mt-6">
-                    <button type="submit" disabled={isSaving} className="px-6 py-2 bg-brand-600 text-white font-medium rounded-md hover:bg-brand-700 disabled:opacity-50">
+                <div className="flex justify-end mt-8">
+                    <button type="submit" disabled={isSaving} className="px-6 py-2.5 bg-brand-600 text-white font-bold rounded-xl hover:bg-brand-700 disabled:opacity-50 transition-all active:scale-[0.98] shadow-sm">
                         {isSaving ? 'Saving...' : 'Update Password'}
                     </button>
                 </div>
             </form>
 
-            <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">Notification Preferences</h2>
-                <p className="text-gray-600 dark:text-gray-400">
-                    This feature is coming soon. You will be able to manage email and in-app notifications here.
-                </p>
+            <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">Notification Preferences</h2>
+                <div className="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                    <p className="text-gray-600 dark:text-gray-400 text-sm font-medium">
+                        This feature is coming soon. You will be able to manage email and in-app notifications here.
+                    </p>
+                </div>
             </div>
         </div>
     );
@@ -1297,6 +1546,14 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
                     .eq('id', user.id);
                 
                 if (profileError) throw profileError;
+
+                // Also update the teachers table if they are a Headteacher
+                if (userRole === UserRole.Headteacher) {
+                    await supabase
+                        .from('teachers')
+                        .update({ school_id: currentSchoolId })
+                        .eq('email', user.email);
+                }
             }
 
             let logo_url = formData.logo_url;
@@ -1323,6 +1580,11 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
             
             if (error) throw error;
 
+            // Also update the schools table with the logo_url for redundancy
+            if (logo_url) {
+                await supabase.from('schools').update({ logo_url }).eq('id', currentSchoolId);
+            }
+
             setMessage({ type: 'success', text: 'Settings updated successfully!' });
             refetchSettings();
             // Reload page to ensure all contexts are updated with the new school ID
@@ -1342,55 +1604,55 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
         );
     }
     
-    const inputClasses = "block w-full p-3 bg-gray-50 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-400";
+    const inputClasses = "block w-full p-3 bg-gray-50 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 dark:bg-gray-800/50 dark:border-gray-700 dark:text-white dark:placeholder-gray-500 transition-all";
 
     return (
         <div>
             {message && (
-                <div className={`p-4 rounded-md mb-6 ${message.type === 'success' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'}`}>
+                <div className={`p-4 rounded-xl border mb-6 ${message.type === 'success' ? 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800/50 dark:text-green-300' : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800/50 dark:text-red-300'}`}>
                     {message.text}
                 </div>
             )}
             <form onSubmit={handleSave} className="space-y-8">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     <div className="lg:col-span-2 space-y-6">
-                        <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">School Information</h2>
+                        <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                            <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">School Information</h2>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div className="md:col-span-2">
-                                    <label htmlFor="school_name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">School Name</label>
+                                    <label htmlFor="school_name" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">School Name</label>
                                     <input type="text" name="school_name" id="school_name" value={formData.school_name || ''} onChange={handleChange} className={inputClasses}/>
                                 </div>
                                 <div className="md:col-span-2">
-                                    <label htmlFor="motto" className="block text-sm font-medium text-gray-700 dark:text-gray-300">School Motto</label>
+                                    <label htmlFor="motto" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">School Motto</label>
                                     <input type="text" name="motto" id="motto" value={formData.motto || ''} onChange={handleChange} className={inputClasses}/>
                                 </div>
                                 <div>
-                                    <label htmlFor="phone" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Phone</label>
+                                    <label htmlFor="phone" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Phone</label>
                                     <input type="text" name="phone" id="phone" value={formData.phone || ''} onChange={handleChange} className={inputClasses}/>
                                 </div>
                                 <div>
-                                    <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
+                                    <label htmlFor="email" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Email</label>
                                     <input type="email" name="email" id="email" value={formData.email || ''} onChange={handleChange} className={inputClasses}/>
                                 </div>
                                 <div className="md:col-span-2">
-                                    <label htmlFor="address" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Address</label>
+                                    <label htmlFor="address" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Address</label>
                                     <textarea name="address" id="address" value={formData.address || ''} onChange={handleChange} rows={3} className={inputClasses}/>
                                 </div>
                             </div>
                         </div>
-                         <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">Attendance Location (GPS)</h2>
-                             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Set the school's coordinates to be used as a reference point for teacher attendance check-ins.</p>
-                             <div className="mb-4 space-y-2">
+                         <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                            <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">Attendance Location (GPS)</h2>
+                             <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 font-medium">Set the school's coordinates to be used as a reference point for teacher attendance check-ins.</p>
+                             <div className="mb-6 space-y-3">
                                 <button 
                                     type="button" 
                                     onClick={handleFetchLocation}
                                     disabled={isFetchingLocation}
-                                    className="w-full md:w-auto px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center"
+                                    className="w-full md:w-auto px-5 py-2.5 text-sm font-bold text-brand-700 bg-brand-50 border border-brand-200 rounded-xl hover:bg-brand-100 disabled:opacity-50 flex items-center justify-center transition-colors dark:bg-brand-900/30 dark:border-brand-800/50 dark:text-brand-300 dark:hover:bg-brand-900/50"
                                 >
                                     {isFetchingLocation ? (
-                                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-brand-600 dark:text-brand-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                         </svg>
@@ -1402,36 +1664,36 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
                                     {isFetchingLocation ? 'Fetching...' : 'Use My Current Location'}
                                 </button>
                                 {locationMessage && (
-                                    <div className={`mt-2 p-3 rounded-md text-sm ${locationMessage.type === 'success' ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-300' : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-300'}`}>
+                                    <div className={`p-3 rounded-xl border text-sm font-medium ${locationMessage.type === 'success' ? 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/30 dark:border-green-800/50 dark:text-green-300' : 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/30 dark:border-red-800/50 dark:text-red-300'}`}>
                                         {locationMessage.text}
                                     </div>
                                 )}
-                                <p className="text-[11px] text-gray-500 italic">
+                                <p className="text-xs text-gray-500 dark:text-gray-400 italic">
                                     Tip: If the button times out, you can find your coordinates on Google Maps and enter them manually below.
                                 </p>
                             </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div>
-                                    <label htmlFor="school_latitude" className="block text-sm font-medium text-gray-700 dark:text-gray-300">School Latitude</label>
+                                    <label htmlFor="school_latitude" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">School Latitude</label>
                                     <input type="number" step="any" name="school_latitude" id="school_latitude" value={formData.school_latitude ?? ''} onChange={handleChange} className={inputClasses} placeholder="e.g., 5.603717"/>
                                 </div>
                                 <div>
-                                    <label htmlFor="school_longitude" className="block text-sm font-medium text-gray-700 dark:text-gray-300">School Longitude</label>
+                                    <label htmlFor="school_longitude" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">School Longitude</label>
                                     <input type="number" step="any" name="school_longitude" id="school_longitude" value={formData.school_longitude ?? ''} onChange={handleChange} className={inputClasses} placeholder="e.g., -0.186964"/>
                                 </div>
                             </div>
                         </div>
-                        <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">Payment Gateway (Paystack)</h2>
+                        <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                            <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">Payment Gateway (Paystack)</h2>
                             {userRole === UserRole.Admin ? (
                                 <>
-                                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">Enter your Paystack API keys. These will be used to enable credit top-ups for students and parents.</p>
-                                    <div className="p-3 mb-4 bg-blue-50 dark:bg-blue-900/30 border-l-4 border-blue-400 text-blue-700 dark:text-blue-200 text-sm">
+                                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 font-medium">Enter your Paystack API keys. These will be used to enable credit top-ups for students and parents.</p>
+                                    <div className="p-4 mb-6 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800/50 rounded-xl text-blue-800 dark:text-blue-300 text-sm">
                                         <strong>Note:</strong> The <strong>Public Key</strong> is used on the client-side to initialize payments. The <strong>Secret Key</strong> is kept securely in the database but is not actively used by the client application to ensure security.
                                     </div>
-                                    <div className="space-y-4">
+                                    <div className="space-y-5">
                                         <div>
-                                            <label htmlFor="currency" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Currency</label>
+                                            <label htmlFor="currency" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Currency</label>
                                             <select name="currency" id="currency" value={formData.currency || ''} onChange={handleChange} className={inputClasses}>
                                                 <option value="">-- Select Currency --</option>
                                                 <option value="GHS">GHS (Ghana Cedi)</option>
@@ -1440,14 +1702,14 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
                                             </select>
                                         </div>
                                         <div>
-                                            <label htmlFor="paystack_public_key" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Public Key</label>
+                                            <label htmlFor="paystack_public_key" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Public Key</label>
                                             <input type="text" name="paystack_public_key" id="paystack_public_key" value={formData.paystack_public_key || ''} onChange={handleChange} className={inputClasses} placeholder="pk_test_... or pk_live_..."/>
                                         </div>
                                         <div>
-                                            <label htmlFor="paystack_secret_key" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Secret Key</label>
+                                            <label htmlFor="paystack_secret_key" className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Secret Key</label>
                                             <div className="relative">
-                                                <input type={showSecret ? 'text' : 'password'} name="paystack_secret_key" id="paystack_secret_key" value={formData.paystack_secret_key || ''} onChange={handleChange} className={inputClasses} placeholder="sk_test_... or sk_live_..."/>
-                                                <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute inset-y-0 right-0 px-3 flex items-center text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                                                <input type={showSecret ? 'text' : 'password'} name="paystack_secret_key" id="paystack_secret_key" value={formData.paystack_secret_key || ''} onChange={handleChange} className={`${inputClasses} pr-16`} placeholder="sk_test_... or sk_live_..."/>
+                                                <button type="button" onClick={() => setShowSecret(!showSecret)} className="absolute inset-y-0 right-0 px-4 flex items-center text-sm font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
                                                     {showSecret ? 'Hide' : 'Show'}
                                                 </button>
                                             </div>
@@ -1455,16 +1717,16 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
                                     </div>
                                 </>
                             ) : (
-                                <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-md">
+                                <div className="p-5 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-xl">
                                     <div className="flex">
                                         <div className="flex-shrink-0">
-                                            <svg className="h-5 w-5 text-amber-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                                            <svg className="h-5 w-5 text-amber-500 dark:text-amber-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
                                                 <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                                             </svg>
                                         </div>
                                         <div className="ml-3">
-                                            <h3 className="text-sm font-medium text-amber-800 dark:text-amber-300">Restricted Access</h3>
-                                            <div className="mt-2 text-sm text-amber-700 dark:text-amber-400">
+                                            <h3 className="text-sm font-bold text-amber-800 dark:text-amber-300">Restricted Access</h3>
+                                            <div className="mt-2 text-sm text-amber-700 dark:text-amber-400/80 font-medium">
                                                 <p>Payment gateway settings can only be managed by a Super Admin. Please contact the platform administrator to configure your Paystack keys.</p>
                                             </div>
                                         </div>
@@ -1474,13 +1736,13 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
                         </div>
                     </div>
                     <div className="space-y-6">
-                         <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                            <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">School Logo</h2>
+                         <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                            <h2 className="text-xl font-bold mb-6 text-gray-900 dark:text-white">School Logo</h2>
                             <ImageUpload onFileChange={setLogoFile} defaultImageUrl={formData.logo_url} />
                         </div>
-                        <div className="p-6 border border-gray-200 dark:border-gray-700 rounded-lg">
-                             <h2 className="text-xl font-semibold mb-4 text-gray-800 dark:text-gray-200">Default School Theme</h2>
-                             <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Set the default theme for all users. Users can override this in their own settings.</p>
+                        <div className="p-8 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl shadow-sm">
+                             <h2 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">Default School Theme</h2>
+                             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4 font-medium">Set the default theme for all users. Users can override this in their own settings.</p>
                              <select name="theme" value={formData.theme || 'light'} onChange={handleChange} className={inputClasses}>
                                  <option value="light">Light Mode</option>
                                  <option value="dark">Dark Mode</option>
@@ -1489,8 +1751,8 @@ export const SchoolSettingsComponent: React.FC<{ schoolId: string | null; userRo
                     </div>
                 </div>
 
-                <div className="flex justify-end">
-                    <button type="submit" disabled={isSaving} className="px-8 py-3 bg-brand-600 text-white font-medium rounded-md hover:bg-brand-700 disabled:opacity-50">
+                <div className="flex justify-end pt-4">
+                    <button type="submit" disabled={isSaving} className="px-8 py-3 bg-brand-600 text-white font-bold rounded-xl hover:bg-brand-700 disabled:opacity-50 transition-all active:scale-[0.98] shadow-sm">
                         {isSaving ? 'Saving...' : 'Save Settings'}
                     </button>
                 </div>
@@ -1517,54 +1779,56 @@ const SettingsPage: React.FC<SettingsPageProps> = ({ profile }) => {
     }
     
     return (
-        <div>
-            <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
+        <div className="space-y-8">
+            <div className="flex space-x-1 bg-gray-100/50 dark:bg-gray-800/50 p-1 rounded-xl w-max border border-gray-200/50 dark:border-gray-700/50">
                 <button 
                     onClick={() => setActiveTab('my-settings')} 
-                    className={`px-4 py-2 text-lg font-medium transition-colors ${activeTab === 'my-settings' 
-                        ? 'border-b-2 border-brand-600 text-brand-600 dark:text-brand-400' 
-                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                    className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-all ${activeTab === 'my-settings' 
+                        ? 'bg-white dark:bg-gray-700 text-brand-600 dark:text-brand-400 shadow-sm' 
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50'}`}
                 >
                     My Settings
                 </button>
                 <button 
                     onClick={() => setActiveTab('school-settings')} 
-                    className={`px-4 py-2 text-lg font-medium transition-colors ${activeTab === 'school-settings' 
-                        ? 'border-b-2 border-brand-600 text-brand-600 dark:text-brand-400' 
-                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                    className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-all ${activeTab === 'school-settings' 
+                        ? 'bg-white dark:bg-gray-700 text-brand-600 dark:text-brand-400 shadow-sm' 
+                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50'}`}
                 >
                     School Settings
                 </button>
                  {profile.role === UserRole.Admin && (
                      <button 
                         onClick={() => setActiveTab('advanced')} 
-                        className={`px-4 py-2 text-lg font-medium transition-colors ${activeTab === 'advanced' 
-                            ? 'border-b-2 border-brand-600 text-brand-600 dark:text-brand-400' 
-                            : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                        className={`px-5 py-2.5 text-sm font-bold rounded-lg transition-all ${activeTab === 'advanced' 
+                            ? 'bg-white dark:bg-gray-700 text-brand-600 dark:text-brand-400 shadow-sm' 
+                            : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700/50'}`}
                     >
                         Advanced
                     </button>
                  )}
             </div>
             
-            {activeTab === 'my-settings' && (
-                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">My Settings</h1>
-                    <UserSettings />
-                </div>
-            )}
-            {activeTab === 'school-settings' && (
-                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">School Settings</h1>
-                    <SchoolSettingsComponent schoolId={profile.school_id} userRole={profile.role} />
-                </div>
-            )}
-            {activeTab === 'advanced' && profile.role === UserRole.Admin && (
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">Advanced Database Scripts</h1>
-                    <AdvancedSettings />
-                </div>
-            )}
+            <div className="mt-6">
+                {activeTab === 'my-settings' && (
+                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">My Settings</h1>
+                        <UserSettings />
+                    </div>
+                )}
+                {activeTab === 'school-settings' && (
+                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">School Settings</h1>
+                        <SchoolSettingsComponent schoolId={profile.school_id} userRole={profile.role} />
+                    </div>
+                )}
+                {activeTab === 'advanced' && profile.role === UserRole.Admin && (
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Advanced Database Scripts</h1>
+                        <AdvancedSettings />
+                    </div>
+                )}
+            </div>
         </div>
     );
 };

@@ -113,6 +113,10 @@ const Timetable: React.FC<TimetableProps> = ({ profile }) => {
 
     const handleAssignModalSubmit = async () => {
         if (!currentSlot || !selectedClassId) return;
+        if (!profile.school_id) {
+            setError("Your profile is not linked to a school. Please contact an administrator.");
+            return;
+        }
         setError(null);
         
         // Conflict detection: Check if the selected teacher is already booked at this time in another class.
@@ -174,6 +178,10 @@ const Timetable: React.FC<TimetableProps> = ({ profile }) => {
 
     const handleAddTimeSlot = async (e: FormEvent) => {
         e.preventDefault();
+        if (!profile.school_id) {
+            setError("Your profile is not linked to a school. Please contact an administrator.");
+            return;
+        }
         const { error } = await supabase.from('time_slots').insert({
             ...newTimeSlot,
             school_id: profile.school_id

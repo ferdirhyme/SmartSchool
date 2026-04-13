@@ -17,19 +17,25 @@ interface ChildData {
 }
 
 const Widget: React.FC<{ icon: React.FC<{ className?: string }>; title: string; children: React.ReactNode }> = ({ icon: Icon, title, children }) => (
-    <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-        <div className="flex items-center mb-4">
-            <Icon className="w-6 h-6 text-brand-600 dark:text-brand-400 mr-3" />
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-white">{title}</h3>
+    <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col h-full">
+        <div className="flex items-center mb-6">
+            <div className="p-3 bg-brand-50 dark:bg-brand-900/50 rounded-xl mr-4">
+                <Icon className="w-6 h-6 text-brand-600 dark:text-brand-400" />
+            </div>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white">{title}</h3>
         </div>
-        {children}
+        <div className="flex-grow">
+            {children}
+        </div>
     </div>
 );
 
 const QuickAction: React.FC<{ title: string; icon: React.FC<{ className?: string }>; onClick: () => void; }> = ({ title, icon: Icon, onClick }) => (
-    <button onClick={onClick} className="flex flex-col items-center justify-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors w-full h-full">
-        <Icon className="w-8 h-8 text-brand-600 dark:text-brand-400 mb-2" />
-        <span className="text-sm font-semibold text-gray-700 dark:text-white text-center">{title}</span>
+    <button onClick={onClick} className="flex flex-col items-center justify-center p-5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-2xl hover:bg-brand-50 dark:hover:bg-gray-700/80 hover:border-brand-200 dark:hover:border-gray-600 transition-all duration-200 group shadow-sm hover:shadow-md w-full h-full">
+        <div className="bg-gray-50 dark:bg-gray-700 p-3 rounded-xl mb-3 group-hover:bg-brand-100 dark:group-hover:bg-brand-900/50 transition-colors">
+            <Icon className="w-7 h-7 text-gray-600 dark:text-gray-300 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors" />
+        </div>
+        <span className="text-sm font-semibold text-gray-700 dark:text-gray-200 text-center group-hover:text-brand-700 dark:group-hover:text-brand-300 transition-colors">{title}</span>
     </button>
 );
 
@@ -134,7 +140,7 @@ const ParentDashboardHome: React.FC<ParentDashboardHomeProps> = ({ profile, setA
                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2 space-y-6">
                          <Widget icon={ReportsIcon} title="Quick Links">
-                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                                 <QuickAction title="View Ward's Reports" icon={ReportsIcon} onClick={() => setActivePage('Reports')} />
                                 <QuickAction title="Top Up Balance" icon={CashIcon} onClick={() => setActivePage('Billing')} />
                                 <QuickAction title="Messages" icon={MessagesIcon} onClick={() => setActivePage('Messages')} />
@@ -142,46 +148,62 @@ const ParentDashboardHome: React.FC<ParentDashboardHomeProps> = ({ profile, setA
                         </Widget>
                         <Widget icon={AcademicsIcon} title="Performance Snapshot">
                             {childData.assessments.length > 0 ? (
-                                <ul className="space-y-3">
+                                <ul className="space-y-4">
                                     {childData.assessments.map(p => (
-                                        <li key={p.id} className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-700/50 rounded-md">
-                                            <span className="font-semibold text-gray-800 dark:text-white">{p.subject.name}</span>
-                                            <span className={`font-bold text-lg ${p.total_score && p.total_score >= 50 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{p.total_score}/100</span>
+                                        <li key={p.id} className="flex justify-between items-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700 transition-all hover:shadow-sm">
+                                            <div>
+                                                <span className="font-bold text-gray-900 dark:text-white">{p.subject.name}</span>
+                                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 ml-2 bg-gray-200 dark:bg-gray-600 px-2 py-0.5 rounded-full">{p.term}</span>
+                                            </div>
+                                            <span className={`font-black text-lg ${p.total_score && p.total_score >= 50 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{p.total_score}/100</span>
                                         </li>
                                     ))}
                                 </ul>
                             ) : (
-                                <p className="text-gray-500 dark:text-gray-400">No recent assessment scores available.</p>
+                                <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No recent assessment scores available.</p>
+                                </div>
                             )}
                         </Widget>
                     </div>
 
                      <div className="space-y-6">
                         <Widget icon={CashIcon} title="Fee & Billing Status">
-                            <div>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Outstanding Balance</p>
-                                <p className={`text-3xl font-bold ${childData.fees.outstanding > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                            <div className="p-5 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700 mb-4">
+                                <p className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Outstanding Balance</p>
+                                <p className={`text-4xl font-black ${childData.fees.outstanding > 0 ? 'text-red-500 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
                                     GHS {childData.fees.outstanding.toFixed(2)}
                                 </p>
                             </div>
-                             <div className="mt-4">
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Credit Balance</p>
-                                <p className="text-2xl font-bold text-gray-800 dark:text-white">
+                             <div className="p-5 bg-brand-50 dark:bg-brand-900/20 rounded-xl border border-brand-100 dark:border-brand-800/50">
+                                <p className="text-sm font-bold text-brand-700 dark:text-brand-300 uppercase tracking-wider mb-1">Credit Balance</p>
+                                <p className="text-3xl font-black text-brand-900 dark:text-brand-100">
                                     GHS {profile.credit_balance.toFixed(2)}
                                 </p>
                             </div>
-                            <button onClick={() => setActivePage('Billing')} className="mt-4 w-full text-sm font-medium text-brand-600 hover:underline">Pay Fees / Top Up Credit</button>
+                            <button onClick={() => setActivePage('Billing')} className="mt-5 w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-sm text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 transition-all active:scale-[0.98]">Pay Fees / Top Up Credit</button>
                         </Widget>
 
                         <Widget icon={UserCheckIcon} title="Attendance (Last 30 Days)">
                              {childData.attendance.total > 0 ? (
-                                <div className="space-y-2">
-                                    <div className="flex justify-between items-center"><span className="text-green-600 dark:text-green-400">Present</span><span className="font-bold">{childData.attendance.present}</span></div>
-                                    <div className="flex justify-between items-center"><span className="text-yellow-600 dark:text-yellow-400">Late</span><span className="font-bold">{childData.attendance.late}</span></div>
-                                    <div className="flex justify-between items-center"><span className="text-red-500 dark:text-red-400">Absent</span><span className="font-bold">{childData.attendance.absent}</span></div>
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-100 dark:border-green-800/50">
+                                        <span className="text-sm font-bold text-green-700 dark:text-green-400">Present</span>
+                                        <span className="font-black text-green-700 dark:text-green-400">{childData.attendance.present}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800/50">
+                                        <span className="text-sm font-bold text-amber-700 dark:text-amber-400">Late</span>
+                                        <span className="font-black text-amber-700 dark:text-amber-400">{childData.attendance.late}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 dark:border-red-800/50">
+                                        <span className="text-sm font-bold text-red-700 dark:text-red-400">Absent</span>
+                                        <span className="font-black text-red-700 dark:text-red-400">{childData.attendance.absent}</span>
+                                    </div>
                                 </div>
                             ) : (
-                                <p className="text-gray-500 dark:text-gray-400">No data available.</p>
+                                <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No attendance data available.</p>
+                                </div>
                             )}
                         </Widget>
                      </div>

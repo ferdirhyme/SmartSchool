@@ -81,20 +81,11 @@ const ManageSubjects: React.FC<ManageSubjectsProps> = ({ profile }) => {
             // Remove assignment
             const { error } = await supabase
                 .from('teacher_subjects')
-                .delete()
-                .eq('teacher_id', teacherId)
-                .eq('subject_id', subjectId);
-            
-            if (error) setError(error.message);
-        } else {
-            // Add assignment
-            const { error } = await supabase
-                .from('teacher_subjects')
-                .insert({
+                .upsert({
                     teacher_id: teacherId,
                     subject_id: subjectId,
                     school_id: profile.school_id
-                });
+                }, { onConflict: 'teacher_id,subject_id' });
             
             if (error) setError(error.message);
         }

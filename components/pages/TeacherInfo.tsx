@@ -144,20 +144,16 @@ const TeacherInfo: React.FC<TeacherInfoProps> = ({ profile }) => {
         // 3. Update subjects (delete all then re-insert)
         await supabase.from('teacher_subjects').delete().eq('teacher_id', id);
         if (subjects.length > 0) {
-            const newSubjectLinks = subjects.map(s => ({ teacher_id: id, subject_id: s.id }));
-            const { error: subjectError } = await supabase.from('teacher_subjects').insert(newSubjectLinks);
+            const newSubjectLinks = subjects.map(s => ({ teacher_id: id, subject_id: s.id, school_id: profile.school_id }));
+            const { error: subjectError } = await supabase.from('teacher_subjects').upsert(newSubjectLinks, { onConflict: 'teacher_id,subject_id' });
             if (subjectError) setError(`Failed to update subjects: ${subjectError.message}`);
         }
         
         // 4. Update classes (delete all then re-insert)
         await supabase.from('teacher_classes').delete().eq('teacher_id', id);
         if (teachable_classes && teachable_classes.length > 0) {
-            const newClassLinks = teachable_classes.map(tc => ({ 
-                teacher_id: id, 
-                class_id: tc.class.id,
-                is_homeroom: tc.is_homeroom
-            }));
-            const { error: classError } = await supabase.from('teacher_classes').insert(newClassLinks);
+            const newClassLinks = teachable_classes.map(tc => ({ teacher_id: id, class_id: tc.class.id, is_homeroom: tc.is_homeroom, school_id: profile.school_id }));
+            const { error: classError } = await supabase.from('teacher_classes').upsert(newClassLinks, { onConflict: 'teacher_id,class_id' });
              if (classError) setError(`Failed to update classes: ${classError.message}`);
         }
         

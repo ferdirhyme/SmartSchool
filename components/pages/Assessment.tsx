@@ -364,7 +364,7 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
 
         try {
             const { error } = await supabase.from('student_assessments').upsert(recordsToUpsert, {
-                onConflict: 'student_id,class_id,subject_id,term,year'
+                onConflict: 'school_id,student_id,class_id,subject_id,term,year'
             });
 
             if (error) throw error;

@@ -17,6 +17,7 @@ import {
   BillingIcon
 } from '../components/icons/NavIcons.tsx';
 import { UserRole } from '../types.ts';
+import { MessageSquare } from 'lucide-react';
 
 export interface NavItem {
   label: string;
@@ -59,6 +60,8 @@ const headteacherNavItems: NavItem[] = [
   { label: 'Messages', icon: MessagesIcon },
   { label: 'Manage Announcements', icon: AnnouncementIcon },
   { label: 'Reports', icon: ReportsIcon },
+  { label: 'Profile', icon: ProfileIcon },
+  { label: 'Feedback', icon: MessageSquare },
   { label: 'Settings', icon: SettingsIcon },
 ];
 
@@ -84,6 +87,7 @@ const teacherNavItems: NavItem[] = [
   { label: 'Messages', icon: MessagesIcon },
   { label: 'Billing', icon: BillingIcon },
   { label: 'Profile', icon: ProfileIcon },
+  { label: 'Feedback', icon: MessageSquare },
   { label: 'Settings', icon: SettingsIcon },
 ];
 
@@ -92,6 +96,7 @@ const studentNavItems: NavItem[] = [
   { label: 'Reports', icon: ReportsIcon },
   { label: 'Messages', icon: MessagesIcon },
   { label: 'Profile', icon: ProfileIcon },
+  { label: 'Feedback', icon: MessageSquare },
   { label: 'Settings', icon: SettingsIcon },
 ];
 
@@ -101,6 +106,7 @@ const parentNavItems: NavItem[] = [
   { label: 'Messages', icon: MessagesIcon },
   { label: 'Billing', icon: BillingIcon },
   { label: 'Profile', icon: ProfileIcon },
+  { label: 'Feedback', icon: MessageSquare },
   { label: 'Settings', icon: SettingsIcon },
 ];
 
