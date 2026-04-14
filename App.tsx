@@ -145,38 +145,32 @@ const App: React.FC = () => {
     );
   }
 
-  // If the user is resetting their password, show the ResetPassword component
-  // regardless of whether they are fully logged in yet.
-  if (view === 'reset-password') {
-    return <ResetPassword onComplete={() => setView('login')} />;
-  }
-
-  if (!session || !profile) {
-    if (view === 'forgot-password') {
-      return <ForgotPassword onNavigateToLogin={() => setView('login')} />;
-    }
-    return view === 'login' ? (
-      <AuthPage 
-        onNavigateToSignup={() => setView('signup')} 
-        onNavigateToForgotPassword={() => setView('forgot-password')} 
-      />
-    ) : (
-      <SignupPage onNavigateToLogin={() => setView('login')} />
-    );
-  }
-
-  // Check for onboarding status (Superadmins are exempt)
-  if (!profile.is_onboarded && profile.role !== UserRole.Admin) {
-    return <PendingOnboarding fullName={profile.full_name} />;
-  }
-
   return (
     <SettingsProvider session={session} profile={profile}>
-      {profile.role === UserRole.Admin && <AdminDashboard session={session} profile={profile} />}
-      {profile.role === UserRole.Headteacher && <HeadteacherDashboard session={session} profile={profile} />}
-      {profile.role === UserRole.Teacher && <TeacherDashboard session={session} profile={profile} />}
-      {profile.role === UserRole.Student && <StudentDashboard session={session} profile={profile} />}
-      {profile.role === UserRole.Parent && <ParentDashboard session={session} profile={profile} />}
+      {view === 'reset-password' ? (
+        <ResetPassword onComplete={() => setView('login')} />
+      ) : (!session || !profile) ? (
+        view === 'forgot-password' ? (
+          <ForgotPassword onNavigateToLogin={() => setView('login')} />
+        ) : view === 'login' ? (
+          <AuthPage 
+            onNavigateToSignup={() => setView('signup')} 
+            onNavigateToForgotPassword={() => setView('forgot-password')} 
+          />
+        ) : (
+          <SignupPage onNavigateToLogin={() => setView('login')} />
+        )
+      ) : (!profile.is_onboarded && profile.role !== UserRole.Admin) ? (
+        <PendingOnboarding fullName={profile.full_name} />
+      ) : (
+        <>
+          {profile.role === UserRole.Admin && <AdminDashboard session={session} profile={profile} />}
+          {profile.role === UserRole.Headteacher && <HeadteacherDashboard session={session} profile={profile} />}
+          {profile.role === UserRole.Teacher && <TeacherDashboard session={session} profile={profile} />}
+          {profile.role === UserRole.Student && <StudentDashboard session={session} profile={profile} />}
+          {profile.role === UserRole.Parent && <ParentDashboard session={session} profile={profile} />}
+        </>
+      )}
     </SettingsProvider>
   );
 };

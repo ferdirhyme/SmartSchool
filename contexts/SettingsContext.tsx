@@ -6,9 +6,15 @@ import { Session } from '@supabase/supabase-js';
 
 type Theme = 'light' | 'dark';
 
+interface PlatformSettings {
+  platform_logo_url: string | null;
+  platform_name: string;
+}
+
 interface SettingsContextType {
   settings: SchoolSettings | null;
   school: School | null;
+  platformSettings: PlatformSettings | null;
   theme: Theme;
   setTheme: (theme: Theme) => void;
   isLoading: boolean;
@@ -16,6 +22,11 @@ interface SettingsContextType {
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
+
+const defaultPlatformSettings: PlatformSettings = {
+  platform_logo_url: null,
+  platform_name: 'FerdIT School Software',
+};
 
 const defaultSettings: SchoolSettings = {
     id: '11111111-1111-1111-1111-111111111111',
@@ -37,6 +48,7 @@ const defaultSettings: SchoolSettings = {
 export const SettingsProvider: React.FC<{ children: ReactNode; session: Session | null; profile: Profile | null }> = ({ children, session, profile: profileProp }) => {
   const [settings, setSettings] = useState<SchoolSettings | null>(null);
   const [school, setSchool] = useState<School | null>(null);
+  const [platformSettings, setPlatformSettings] = useState<PlatformSettings | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [theme, setThemeState] = useState<Theme>(() => {
     const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -60,8 +72,20 @@ export const SettingsProvider: React.FC<{ children: ReactNode; session: Session 
     lastUserId.current = userId;
     let loadedSettings: SchoolSettings = { ...defaultSettings };
     let loadedSchool: School | null = null;
+    let loadedPlatformSettings: PlatformSettings = { ...defaultPlatformSettings };
 
     try {
+      // Fetch platform settings (publicly accessible)
+      const { data: platformData } = await supabase
+        .from('platform_settings')
+        .select('platform_logo_url, platform_name')
+        .eq('id', 1)
+        .maybeSingle();
+      
+      if (platformData) {
+        loadedPlatformSettings = { ...defaultPlatformSettings, ...platformData };
+      }
+
       // Use profile from props if available, otherwise fetch it
       let profile = profileProp;
       
@@ -139,6 +163,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode; session: Session 
     } finally {
       setSettings(loadedSettings);
       setSchool(loadedSchool);
+      setPlatformSettings(loadedPlatformSettings);
       setThemeState(loadedSettings.theme || 'light');
       setIsLoading(false);
     }
@@ -148,6 +173,24 @@ export const SettingsProvider: React.FC<{ children: ReactNode; session: Session 
     if (session) {
       fetchSettings();
     } else {
+      // Still fetch platform settings even if not logged in (for login/signup pages)
+      const fetchPublicSettings = async () => {
+        try {
+          const { data } = await supabase
+            .from('platform_settings')
+            .select('platform_logo_url, platform_name')
+            .eq('id', 1)
+            .maybeSingle();
+          if (data) {
+            setPlatformSettings(data);
+          } else {
+            setPlatformSettings(defaultPlatformSettings);
+          }
+        } catch (e) {
+          setPlatformSettings(defaultPlatformSettings);
+        }
+      };
+      fetchPublicSettings();
       setSettings(defaultSettings);
       setSchool(null);
       setThemeState(defaultSettings.theme);
@@ -170,7 +213,7 @@ export const SettingsProvider: React.FC<{ children: ReactNode; session: Session 
 
 
   return (
-    <SettingsContext.Provider value={{ settings, school, isLoading, refetchSettings: fetchSettings, theme, setTheme }}>
+    <SettingsContext.Provider value={{ settings, school, platformSettings, isLoading, refetchSettings: fetchSettings, theme, setTheme }}>
       {children}
     </SettingsContext.Provider>
   );

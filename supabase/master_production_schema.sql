@@ -312,7 +312,26 @@ CREATE TABLE IF NOT EXISTS platform_settings (
 );
 INSERT INTO platform_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
--- 27. Feedback
+-- 27. Storage Buckets
+-- Note: storage.buckets and storage.objects are in the 'storage' schema
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+-- 28. Storage Policies
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
+CREATE POLICY "Public Access" ON storage.objects FOR SELECT USING (bucket_id = 'avatars');
+
+DROP POLICY IF EXISTS "Authenticated Upload" ON storage.objects;
+CREATE POLICY "Authenticated Upload" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
+
+DROP POLICY IF EXISTS "User Update Access" ON storage.objects;
+CREATE POLICY "User Update Access" ON storage.objects FOR UPDATE USING (bucket_id = 'avatars' AND (auth.uid() = owner OR public.is_admin()));
+
+DROP POLICY IF EXISTS "User Delete Access" ON storage.objects;
+CREATE POLICY "User Delete Access" ON storage.objects FOR DELETE USING (bucket_id = 'avatars' AND (auth.uid() = owner OR public.is_admin()));
+
+-- 29. Feedback
 CREATE TABLE IF NOT EXISTS feedback (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,

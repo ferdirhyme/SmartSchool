@@ -1,11 +1,13 @@
 import React, { useState, FormEvent } from 'react';
 import { supabase } from '../lib/supabase.ts';
+import { useSettings } from '../contexts/SettingsContext.tsx';
 
 interface ForgotPasswordProps {
   onNavigateToLogin: () => void;
 }
 
 const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onNavigateToLogin }) => {
+  const { platformSettings } = useSettings();
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -33,13 +35,17 @@ const ForgotPassword: React.FC<ForgotPasswordProps> = ({ onNavigateToLogin }) =>
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-xl p-8">
         <div className="text-center mb-8">
-          <div className="inline-block p-3 bg-brand-100 dark:bg-brand-900/30 rounded-full mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-brand-600 dark:text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-            </svg>
+          <div className="inline-block p-3 bg-brand-100 dark:bg-brand-900/30 rounded-xl mb-4 overflow-hidden w-16 h-16 flex items-center justify-center">
+            {platformSettings?.platform_logo_url ? (
+              <img src={platformSettings.platform_logo_url} alt="Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-brand-600 dark:text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+              </svg>
+            )}
           </div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Reset Password</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-2">Enter your email to receive reset instructions</p>
+          <p className="text-gray-500 dark:text-gray-400 mt-2">Enter your email for {platformSettings?.platform_name || 'SmartSchool'} instructions</p>
         </div>
 
         <form onSubmit={handleReset} className="space-y-6">

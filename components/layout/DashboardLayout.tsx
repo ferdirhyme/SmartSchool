@@ -20,7 +20,7 @@ interface DashboardLayoutProps {
 }
 
 const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, activePage, setActivePage, children, hideSidebar = false }) => {
-  const { school, settings, isLoading } = useSettings();
+  const { school, settings, platformSettings, isLoading } = useSettings();
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -28,11 +28,20 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, ac
 
   const currentPageName = typeof activePage === 'string' ? activePage : activePage.page;
 
-  const logoUrl = (settings?.logo_url && settings.logo_url.trim() !== '') 
-    ? settings.logo_url 
-    : (school?.logo_url && school.logo_url.trim() !== '') 
-      ? school.logo_url 
-      : null;
+  // Use platform logo for Admins, otherwise use school logo
+  const isAdmin = profile.role === UserRole.Admin;
+  
+  const logoUrl = isAdmin 
+    ? platformSettings?.platform_logo_url 
+    : ((settings?.logo_url && settings.logo_url.trim() !== '') 
+        ? settings.logo_url 
+        : (school?.logo_url && school.logo_url.trim() !== '') 
+          ? school.logo_url 
+          : platformSettings?.platform_logo_url);
+
+  const displayName = isAdmin
+    ? platformSettings?.platform_name
+    : (school?.name || settings?.school_name || platformSettings?.platform_name || 'SmartSchool');
 
   // Reset logo error when URL changes
   useEffect(() => {
@@ -104,16 +113,14 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, ac
               onError={() => setLogoError(true)}
             />
           ) : (
-            <span key={school?.name || settings?.school_name} className="text-brand-900 font-black text-2xl">
-              {(school?.name || settings?.school_name || 'S')[0].toUpperCase()}
+            <span key={displayName} className="text-brand-900 font-black text-2xl">
+              {(displayName || 'S')[0].toUpperCase()}
             </span>
           )}
         </div>
         <div className="overflow-hidden">
           <h2 className="font-bold truncate text-sm">
-            {(school?.name || settings?.school_name) 
-              ? (school?.name || settings?.school_name) 
-              : (profile.role === UserRole.Admin ? 'Platform Admin' : (profile.role === UserRole.Parent ? 'Parent Portal' : (profile.role === UserRole.Student ? 'Student Portal' : 'SmartSchool')))}
+            {displayName}
           </h2>
           <span className="text-[10px] uppercase font-bold tracking-widest text-brand-400 block mt-0.5">
               {(profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher)

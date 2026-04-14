@@ -3,6 +3,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { UserRole } from '../types.ts';
 import { HeadteacherIcon, TeacherIcon, StudentIcon, ParentIcon } from './icons/UserIcons.tsx';
 import { supabase } from '../lib/supabase.ts';
+import { useSettings } from '../contexts/SettingsContext.tsx';
 
 const roleConfig = {
   [UserRole.Headteacher]: {
@@ -37,6 +38,7 @@ interface AuthPageProps {
 }
 
 const AuthPage: React.FC<AuthPageProps> = ({ onNavigateToSignup, onNavigateToForgotPassword }) => {
+  const { platformSettings } = useSettings();
   const [activeRole, setActiveRole] = useState<UserRole>(UserRole.Teacher);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -67,12 +69,16 @@ const AuthPage: React.FC<AuthPageProps> = ({ onNavigateToSignup, onNavigateToFor
       <div className="hidden lg:flex flex-col items-center justify-center bg-brand-900 p-12 text-center text-white xl:col-span-2 relative overflow-hidden">
           <div className="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-brand-400 via-brand-800 to-brand-950"></div>
           <div className="relative z-10 flex flex-col items-center">
-            <div className="inline-block p-4 bg-white/10 backdrop-blur-md rounded-2xl mb-8 shadow-2xl border border-white/20">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-14 w-14 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v11.494m-9-5.747h18M5.47 16.64l13.06-9.28M5.47 7.36l13.06 9.28" />
-                </svg>
+            <div className="inline-block p-4 bg-white/10 backdrop-blur-md rounded-2xl mb-8 shadow-2xl border border-white/20 overflow-hidden w-24 h-24 flex items-center justify-center">
+                {platformSettings?.platform_logo_url ? (
+                  <img src={platformSettings.platform_logo_url} alt="Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-14 w-14 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v11.494m-9-5.747h18M5.47 16.64l13.06-9.28M5.47 7.36l13.06 9.28" />
+                  </svg>
+                )}
             </div>
-            <h1 className="text-4xl font-extrabold tracking-tight mb-4">Welcome to SmartSchool</h1>
+            <h1 className="text-4xl font-extrabold tracking-tight mb-4">Welcome to {platformSettings?.platform_name || 'SmartSchool'}</h1>
             <p className="text-lg text-brand-100 max-w-sm font-medium leading-relaxed">
               A modern, integrated platform for seamless school management.
             </p>
@@ -81,10 +87,14 @@ const AuthPage: React.FC<AuthPageProps> = ({ onNavigateToSignup, onNavigateToFor
       <div className="flex items-center justify-center py-12 px-4 sm:px-6 lg:py-16 lg:px-8 xl:col-span-3">
         <div className="w-full max-w-md">
             <div className="text-center mb-10">
-                <div className="lg:hidden inline-block p-3 bg-brand-600 rounded-xl mb-6 shadow-md">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v11.494m-9-5.747h18M5.47 16.64l13.06-9.28M5.47 7.36l13.06 9.28" />
-                    </svg>
+                <div className="lg:hidden inline-block p-3 bg-brand-600 rounded-xl mb-6 shadow-md overflow-hidden w-16 h-16 flex items-center justify-center">
+                    {platformSettings?.platform_logo_url ? (
+                      <img src={platformSettings.platform_logo_url} alt="Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v11.494m-9-5.747h18M5.47 16.64l13.06-9.28M5.47 7.36l13.06 9.28" />
+                      </svg>
+                    )}
                 </div>
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">Sign in to your account</h1>
               <p className="text-gray-500 dark:text-gray-400 mt-2 font-medium">Welcome back! Please enter your details.</p>
