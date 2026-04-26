@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabase.ts';
 import { StudentProfile, Class, Profile } from '../../types.ts';
 import StudentProfilePage from './StudentProfilePage.tsx';
-import { Users, School, UserCheck, Search, Filter } from 'lucide-react';
+import { Users, School, UserCheck, Search, Filter, UserMinus } from 'lucide-react';
 import { motion } from 'motion/react';
+import { studentService } from '../../modules/school/student.service.ts';
 
 interface StudentInfoProps {
     profile: Profile;
@@ -16,31 +17,54 @@ const StudentInfo: React.FC<StudentInfoProps> = ({ profile }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedClass, setSelectedClass] = useState<string>('all');
     const [isLoading, setIsLoading] = useState(true);
+    const [isActionLoading, setIsActionLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    const fetchData = async () => {
+        if (!profile?.school_id) return;
+        setIsLoading(true);
+        try {
+            const [studentsRes, classesRes] = await Promise.all([
+                supabase.from('students').select('*, class:classes(id, name)').eq('school_id', profile.school_id).order('full_name'),
+                supabase.from('classes').select('*').eq('school_id', profile.school_id).order('name')
+            ]);
+
+            if (studentsRes.error) throw studentsRes.error;
+            if (classesRes.error) throw classesRes.error;
+
+            setStudents(studentsRes.data as StudentProfile[] || []);
+            setClasses(classesRes.data as Class[] || []);
+        } catch (err: any) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     useEffect(() => {
-        const fetchData = async () => {
-            if (!profile?.school_id) return;
-            setIsLoading(true);
-            try {
-                const [studentsRes, classesRes] = await Promise.all([
-                    supabase.from('students').select('*, class:classes(id, name)').eq('school_id', profile.school_id).order('full_name'),
-                    supabase.from('classes').select('*').eq('school_id', profile.school_id).order('name')
-                ]);
-
-                if (studentsRes.error) throw studentsRes.error;
-                if (classesRes.error) throw classesRes.error;
-
-                setStudents(studentsRes.data as StudentProfile[] || []);
-                setClasses(classesRes.data as Class[] || []);
-            } catch (err: any) {
-                setError(err.message);
-            } finally {
-                setIsLoading(false);
-            }
-        };
         fetchData();
     }, []);
+
+    const handleExpel = async (student: StudentProfile) => {
+        const confirmation = prompt(`To expel ${student.full_name}, please type "EXPEL" to confirm. This action cannot be undone.`);
+        if (confirmation !== "EXPEL") {
+            if (confirmation !== null) alert("Confirmation failed. Please type EXPEL exactly.");
+            return;
+        }
+
+        setIsActionLoading(true);
+        try {
+            const { error } = await studentService.expelStudent(student.id);
+            if (error) throw new Error(error);
+            
+            alert(`${student.full_name} has been expelled.`);
+            fetchData();
+        } catch (err: any) {
+            alert(err.message || "Failed to expel student");
+        } finally {
+            setIsActionLoading(false);
+        }
+    };
 
     const stats = useMemo(() => {
         const total = students.length;
@@ -244,12 +268,22 @@ const StudentInfo: React.FC<StudentInfoProps> = ({ profile }) => {
                                 </td>
                                 <td className="px-6 py-4">{student.guardian_name}</td>
                                 <td className="px-6 py-4 text-right">
-                                    <button 
-                                        onClick={() => setViewingStudentId(student.id)} 
-                                        className="inline-flex items-center px-3 py-1.5 border border-brand-200 dark:border-brand-800 text-brand-600 dark:text-brand-400 rounded-lg hover:bg-brand-50 dark:hover:bg-brand-900/30 transition-colors text-xs font-semibold"
-                                    >
-                                        View Profile
-                                    </button>
+                                    <div className="flex items-center justify-end gap-2">
+                                        <button 
+                                            onClick={() => setViewingStudentId(student.id)} 
+                                            className="inline-flex items-center px-3 py-1.5 border border-brand-200 dark:border-brand-800 text-brand-600 dark:text-brand-400 rounded-lg hover:bg-brand-50 dark:hover:bg-brand-900/30 transition-colors text-xs font-semibold"
+                                        >
+                                            View Profile
+                                        </button>
+                                        <button 
+                                            onClick={() => handleExpel(student)} 
+                                            disabled={isActionLoading}
+                                            className="inline-flex items-center px-3 py-1.5 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors text-xs font-semibold disabled:opacity-50"
+                                        >
+                                            <UserMinus className="w-3.5 h-3.5 mr-1" />
+                                            Expel
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         ))}

@@ -14,8 +14,13 @@ import MessagesPage from '../pages/MessagesPage.tsx';
 import SettingsPage from '../pages/SettingsPage.tsx';
 import ReportsPage from '../pages/ReportsPage.tsx';
 import TermRemarks from '../pages/TermRemarks.tsx';
+import LessonNotesPage from '../pages/LessonNotesPage.tsx';
+import SchemeOfLearningPage from '../pages/SchemeOfLearningPage.tsx';
 import BillingPage from '../pages/BillingPage.tsx';
 import FeedbackPage from '../pages/FeedbackPage.tsx';
+import AccountingPage from '../pages/AccountingPage.tsx';
+import PtmPage from '../pages/PtmPage.tsx';
+import ParentInfo from '../pages/ParentInfo.tsx';
 
 interface DashboardProps {
   session: Session;
@@ -47,8 +52,16 @@ const TeacherDashboard: React.FC<DashboardProps> = ({ session, profile }) => {
       case 'Academics':
       case 'Assessment':
         return <Assessment session={session} profile={profile} />;
+      case 'Lesson Notes':
+        return <LessonNotesPage profile={profile} />;
+      case 'Scheme of Learning':
+        return <SchemeOfLearningPage profile={profile} />;
       case 'Term Remarks':
         return <TermRemarks profile={profile} />;
+      case 'Guardian Management':
+        return <ParentInfo profile={profile} />;
+      case 'PTM Scheduler':
+        return <PtmPage profile={profile} />;
       case 'Reports':
         return <ReportsPage session={session} profile={profile} onReportSelect={setSelectedReport} />;
       case 'Messages':

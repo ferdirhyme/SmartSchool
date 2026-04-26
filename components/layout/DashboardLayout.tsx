@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Menu, X } from 'lucide-react';
+import { Menu, X, RefreshCw } from 'lucide-react';
 import { Profile, School, SubscriptionStatus, UserRole, Announcement, Message } from '../../types.ts';
 import { NavItem } from '../../lib/navigation.ts';
 import { useSettings } from '../../contexts/SettingsContext.tsx';
@@ -238,6 +238,13 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, ac
               <h1 className="text-lg font-semibold text-gray-900 dark:text-white capitalize truncate tracking-tight">{currentPageName}</h1>
           </div>
           <div className="flex items-center gap-4 md:gap-6">
+            <button 
+              onClick={() => window.location.reload()}
+              className="p-2 text-gray-500 hover:text-brand-600 dark:text-gray-400 dark:hover:text-brand-400 rounded-lg hover:bg-brand-50 dark:hover:bg-brand-500/10 transition-colors group relative"
+              title="Reload Dashboard"
+            >
+              <RefreshCw className="w-5 h-5 group-hover:rotate-180 transition-transform duration-500" />
+            </button>
             <NotificationBell 
                 userId={profile.id}
                 onMessageClick={(id) => setActivePage({ page: 'Messages', conversationId: id })}

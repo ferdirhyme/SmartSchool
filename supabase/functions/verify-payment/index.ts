@@ -178,20 +178,26 @@ serve(async (req: Request) => {
       // Convert pesewas to GHS decimal (if your DB stores in main currency)
       const amountInGHS = receivedAmount !== null ? Number((receivedAmount / 100).toFixed(2)) : null;
 
-      // 2) Update transaction as success (and record gateway response). Use a single DB update
-      const { error: updateError } = await supabaseAdmin
-        .from("transactions")
-        .update({
-          status: "success",
-          gateway_response: gatewayData,
-          amount: amountInGHS ?? txRow.amount,
-          updated_at: new Date().toISOString()
-        })
-        .eq("reference", reference);
+      // We use upsert to prevent double-counting and unique index errors.
+      // The database trigger handles balance adjustments for INSERT and UPDATE.
+      const upsertPayload = {
+        user_id: txRow.user_id,
+        amount: amountInGHS ?? txRow.amount,
+        status: "success",
+        reference: reference,
+        gateway: txRow.gateway || "paystack",
+        created_at: txRow.created_at
+      };
 
-      if (updateError) {
-        console.error("Failed to update transaction:", updateError);
-        throw updateError;
+      console.log("Upserting from webhook:", upsertPayload);
+
+      const { error: upsertError } = await supabaseAdmin
+        .from("transactions")
+        .upsert(upsertPayload, { onConflict: 'reference' });
+
+      if (upsertError) {
+        console.error("Failed to record transaction from webhook:", upsertError);
+        throw upsertError;
       }
 
       // 3) Optionally credit user balance or call RPC that performs both update + balance adjust

@@ -44,6 +44,7 @@ export interface Profile {
   admission_numbers?: string[];
   credit_balance: number;
   is_onboarded: boolean;
+  is_suspended: boolean;
   avatar_url?: string;
 }
 
@@ -150,7 +151,8 @@ export type ReportType =
   | 'ClassList'
   | 'AttendanceReport'
   | 'TeacherAttendanceReport'
-  | 'PreviousRecords';
+  | 'PreviousRecords'
+  | 'MockPerformanceAnalytics';
 
 export interface TimeSlot {
     id: string;
@@ -231,6 +233,8 @@ export interface StudentAssessment {
     exam_score?: number | null;
     total_score?: number | null;
     remarks?: string | null;
+    assessment_type?: 'Regular' | 'Mock';
+    mock_tag?: string | null;
 }
 
 export interface StudentTermReport {
@@ -264,6 +268,10 @@ export interface SchoolSettings {
     paystack_public_key: string | null;
     paystack_secret_key: string | null;
     currency: string;
+    current_term?: string | null;
+    current_year?: number | null;
+    term_start_date?: string | null;
+    term_end_date?: string | null;
 }
 
 export interface Message {
@@ -323,4 +331,208 @@ export interface Feedback {
     full_name: string;
     role: string;
   };
+}
+
+// --- Next-Gen Features Types ---
+
+// 1. Library Management
+export interface Book {
+    id: string;
+    school_id: string;
+    title: string;
+    author: string;
+    isbn?: string;
+    category?: string;
+    total_copies: number;
+    available_copies: number;
+    created_at: string;
+}
+
+export interface LibraryBorrow {
+    id: string;
+    school_id: string;
+    book_id: string;
+    student_id: string;
+    borrowed_at: string;
+    due_date: string;
+    returned_at?: string;
+    status: 'borrowed' | 'returned' | 'overdue';
+    book?: Book;
+    student?: Student;
+}
+
+// 2. Inventory & Asset Tracking
+export interface Asset {
+    id: string;
+    school_id: string;
+    name: string;
+    category?: string;
+    description?: string;
+    purchase_date?: string;
+    cost?: number;
+    assigned_to_id?: string;
+    status: 'available' | 'in_use' | 'repair' | 'disposed';
+    created_at: string;
+    assigned_to?: Profile;
+}
+
+// 3. HR & Payroll
+export interface SalaryStructure {
+    id: string;
+    school_id: string;
+    rank: string;
+    basic_salary: number;
+    housing_allowance: number;
+    transport_allowance: number;
+    tax_percentage: number;
+    created_at: string;
+}
+
+export interface PayrollRun {
+    id: string;
+    school_id: string;
+    month: number;
+    year: number;
+    status: 'draft' | 'paid';
+    created_at: string;
+}
+
+export interface Payslip {
+    id: string;
+    payroll_run_id: string;
+    teacher_id: string;
+    gross_total: number;
+    deductions: number;
+    net_total: number;
+    created_at: string;
+    teacher?: Teacher;
+}
+
+// 4. Communication & Safety
+export interface PtmMeeting {
+    id: string;
+    school_id: string;
+    teacher_id: string;
+    student_id: string;
+    parent_id?: string;
+    scheduled_at: string;
+    duration: number;
+    status: 'scheduled' | 'completed' | 'canceled';
+    notes?: string;
+    created_at: string;
+    teacher?: Teacher;
+    parent?: Profile;
+    student?: Student;
+}
+
+export interface VisitorLog {
+    id: string;
+    school_id: string;
+    name: string;
+    purpose: string;
+    phone?: string;
+    check_in: string;
+    check_out?: string;
+    student_id_linked?: string;
+    created_at: string;
+    student?: Student;
+}
+
+// 5. Financial Growth
+export interface Expense {
+    id: string;
+    school_id: string;
+    category: string;
+    amount: number;
+    description: string;
+    expense_date: string;
+    recorded_by?: string;
+    created_at: string;
+}
+
+export interface Scholarship {
+    id: string;
+    school_id: string;
+    student_id: string;
+    name: string;
+    description?: string;
+    amount: number;
+    awarded_date: string;
+    status: 'active' | 'expired' | 'cancelled';
+    created_at: string;
+    student?: Student;
+}
+
+// 6. CBT (Computer-Based Testing)
+export interface Quiz {
+    id: string;
+    school_id: string;
+    subject_id: string;
+    class_id: string;
+    teacher_id: string;
+    title: string;
+    description?: string;
+    time_limit: number;
+    is_active: boolean;
+    created_at: string;
+    subject?: Subject;
+    class?: Class;
+    teacher?: Teacher;
+}
+
+export interface QuizQuestion {
+    id: string;
+    quiz_id: string;
+    question_text: string;
+    question_type: 'mcq' | 'true_false';
+    points: number;
+    question_order: number;
+    created_at: string;
+    options?: QuizOption[];
+}
+
+export interface QuizOption {
+    id: string;
+    question_id: string;
+    option_text: string;
+    is_correct: boolean;
+}
+
+export interface QuizAttempt {
+    id: string;
+    quiz_id: string;
+    student_id: string;
+    started_at: string;
+    completed_at?: string;
+    score: number;
+    status: 'ongoing' | 'completed';
+    created_at: string;
+    quiz?: Quiz;
+    student?: Student;
+}
+
+// 7. Transport Management
+export interface BusRoute {
+    id: string;
+    school_id: string;
+    name: string;
+    driver_name: string;
+    vehicle_number: string;
+    created_at: string;
+}
+
+export interface BusStop {
+    id: string;
+    route_id: string;
+    name: string;
+    arrival_time: string;
+}
+
+export interface BusLog {
+    id: string;
+    school_id: string;
+    route_id: string;
+    trip_type: 'morning' | 'afternoon';
+    logged_at: string;
+    route?: BusRoute;
 }

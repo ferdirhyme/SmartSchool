@@ -23,6 +23,7 @@ export const PromoManagement: React.FC = () => {
     const [description, setDescription] = useState('');
     const [linkUrl, setLinkUrl] = useState('');
     const [imageUrl, setImageUrl] = useState('');
+    const [deleteConfirm, setDeleteConfirm] = useState<AdData | null>(null);
 
     useEffect(() => {
         fetchAds();
@@ -116,19 +117,26 @@ export const PromoManagement: React.FC = () => {
     };
 
     const deleteAd = async (id: string) => {
-        if (!confirm("Are you sure you want to delete this ad?")) return;
-        
+        setIsSaving(true);
         try {
             const { error } = await supabase
                 .from('ads')
                 .delete()
                 .eq('id', id);
             
-            if (error) throw error;
+            if (error) {
+                console.error("Ad Deletion Error:", error);
+                throw error;
+            }
             
             setAds(ads.filter(ad => ad.id !== id));
+            setDeleteConfirm(null);
+            alert("Ad deleted successfully.");
         } catch (err) {
-            alert("Failed to delete ad.");
+            console.error("Ad Deletion Error:", err);
+            alert("Failed to delete ad: " + (err as Error).message);
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -279,7 +287,7 @@ export const PromoManagement: React.FC = () => {
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <button 
-                                        onClick={() => deleteAd(ad.id)}
+                                        onClick={() => setDeleteConfirm(ad)}
                                         className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
                                         title="Delete Ad"
                                     >
@@ -299,6 +307,36 @@ export const PromoManagement: React.FC = () => {
                     </tbody>
                 </table>
             </div>
+
+            {/* Delete Confirmation Modal */}
+            {deleteConfirm && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm">
+                    <div className="bg-white dark:bg-gray-800 max-w-sm w-full p-6 rounded-2xl shadow-2xl border border-gray-100 dark:border-gray-700 animate-in zoom-in-95 duration-200">
+                        <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mb-4">
+                            <Trash2 className="w-6 h-6" />
+                        </div>
+                        <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Delete Ad?</h3>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                            Are you sure you want to delete <strong>{deleteConfirm.title}</strong>? This action cannot be undone.
+                        </p>
+                        <div className="flex gap-3">
+                            <button 
+                                onClick={() => setDeleteConfirm(null)}
+                                className="flex-1 px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-xl transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button 
+                                onClick={() => deleteAd(deleteConfirm.id)}
+                                disabled={isSaving}
+                                className="flex-1 px-4 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors disabled:opacity-50"
+                            >
+                                {isSaving ? 'Deleting...' : 'Yes, Delete'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -102,6 +102,38 @@ export class ProfileService extends BaseService {
       return { data: null, error: this.handleError(err) };
     }
   }
+
+  async updateUserRole(profileId: string, newRole: UserRole): Promise<ServiceResponse<Profile>> {
+    try {
+      const { data, error } = await supabase
+        .from(this.table)
+        .update({ role: newRole })
+        .eq('id', profileId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: this.handleError(err) };
+    }
+  }
+
+  async updateUserSuspension(profileId: string, isSuspended: boolean): Promise<ServiceResponse<Profile>> {
+    try {
+      const { data, error } = await supabase
+        .from(this.table)
+        .update({ is_suspended: isSuspended })
+        .eq('id', profileId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return { data, error: null };
+    } catch (err: any) {
+      return { data: null, error: this.handleError(err) };
+    }
+  }
 }
 
 export const profileService = new ProfileService();

@@ -12,6 +12,7 @@ import { AttendanceReport } from './AttendanceReport.tsx';
 import { StudentAttendanceReport } from './StudentAttendanceReport.tsx';
 import { StudentProgressReport } from './StudentProgressReport.tsx';
 import { TeacherAttendanceReport } from './TeacherAttendanceReport.tsx';
+import { MockPerformanceAnalytics } from './MockPerformanceAnalytics.tsx';
 import { Session } from '@supabase/supabase-js';
 
 interface ReportViewerProps {
@@ -33,6 +34,7 @@ const reportTitles: Record<ReportType, string> = {
     StudentProgressReport: 'Student Progress Report',
     TeacherAttendanceReport: 'Teacher Attendance Report',
     PreviousRecords: 'Previous Academic Records',
+    MockPerformanceAnalytics: 'Mock Performance Analytics (BECE/WASSCE)',
 };
 
 const REPORT_COST = 1.00;
@@ -48,6 +50,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
         teacher_id: '',
         termName: '',
         fee_type_id: '',
+        mock_tag: 'Mock 1',
         startDate: new Date(new Date().setDate(1)).toISOString().split('T')[0],
         endDate: new Date().toISOString().split('T')[0],
     });
@@ -99,7 +102,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                 if (!mounted) return;
                 setClasses(classList);
 
-                if (['StudentReportCard', 'ClassPerformance', 'Broadsheet'].includes(reportType)) {
+                if (['StudentReportCard', 'ClassPerformance', 'Broadsheet', 'MockPerformanceAnalytics'].includes(reportType)) {
                     const { data: subjectData } = await supabase.from('subjects').select('*').order('name');
                     if (mounted) setSubjects(subjectData || []);
                 }
@@ -127,6 +130,21 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
     useEffect(() => {
         let mounted = true;
         const fetchStudents = async () => {
+            if (profile.role === UserRole.Parent || profile.role === UserRole.Student) {
+                const { data } = await supabase
+                    .from('students')
+                    .select('*')
+                    .in('admission_number', profile.admission_numbers || [])
+                    .order('full_name');
+                if (mounted) setStudents(data || []);
+                
+                // If they only have one ward, auto-select it
+                if (data && data.length === 1 && !filters.student_id) {
+                    setFilters(prev => ({ ...prev, student_id: data[0].id }));
+                }
+                return;
+            }
+
             if (!filters.class_id) {
                 if (mounted) setStudents([]);
                 return;
@@ -148,7 +166,8 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                     .select('student:students(*)')
                     .eq('class_id', filters.class_id)
                     .eq('year', filters.year)
-                    .eq('term', filters.termName);
+                    .eq('term', filters.termName)
+                    .or('assessment_type.eq.Regular,assessment_type.is.null');
                 
                 historicalStudents = (historicalAssessments || [])
                     .map((a: any) => a.student)
@@ -172,16 +191,17 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
     // --- Disable Generate button logic ---
     const missingFilters = useMemo(() => {
         const missing: string[] = [];
+        const isParent = profile.role === UserRole.Parent || profile.role === UserRole.Student;
         switch (reportType) {
             case 'StudentReportCard':
             case 'PreviousRecords':
                 if (!filters.termName) missing.push('Term');
                 if (!filters.year) missing.push('Year');
-                if (!filters.class_id) missing.push('Class');
+                if (!isParent && !filters.class_id) missing.push('Class');
                 if (!generateForAll && !filters.student_id) missing.push('Student');
                 break;
             case 'StudentProgressReport':
-                if (!filters.class_id) missing.push('Class');
+                if (!isParent && !filters.class_id) missing.push('Class');
                 if (!filters.student_id) missing.push('Student');
                 break;
             case 'ClassPerformance':
@@ -196,7 +216,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                 if (!filters.class_id) missing.push('Class');
                 break;
             case 'PaymentHistory':
-                if (!filters.class_id) missing.push('Class');
+                if (!isParent && !filters.class_id) missing.push('Class');
                 if (!filters.student_id) missing.push('Student');
                 break;
             case 'ClassList':
@@ -211,7 +231,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                 if (!filters.endDate) missing.push('End Date');
                 break;
             case 'StudentAttendanceReport':
-                if (!filters.class_id) missing.push('Class');
+                if (!isParent && !filters.class_id) missing.push('Class');
                 if (!filters.student_id) missing.push('Student');
                 if (!filters.startDate) missing.push('Start Date');
                 if (!filters.endDate) missing.push('End Date');
@@ -222,12 +242,12 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                 break;
         }
         return missing;
-    }, [filters, reportType, generateForAll]);
+    }, [filters, reportType, generateForAll, profile.role]);
 
     const isGenerateDisabled = isLoading || missingFilters.length > 0;
 
     // --- Main Report Generation Logic ---
-    const executeReportGeneration = async () => {
+    const executeReportGeneration = async (): Promise<boolean> => {
         setIsLoading(true);
         setError(null);
         setReportData(null);
@@ -243,7 +263,12 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                         const { data: currentStudents } = await supabase.from('students').select('*, class:classes(id,name)').eq('class_id', filters.class_id).order('full_name');
                         
                         // 2. Get assessments for this class/term/year
-                        const { data: allClassAssessments, error: assessmentsError } = await supabase.from('student_assessments').select('*, subject:subjects(name), student:students(*)').eq('class_id', filters.class_id).eq('term', filters.termName).eq('year', filters.year);
+                        const { data: allClassAssessments, error: assessmentsError } = await supabase.from('student_assessments')
+                            .select('*, subject:subjects(name), student:students(*)')
+                            .eq('class_id', filters.class_id)
+                            .eq('term', filters.termName)
+                            .eq('year', filters.year)
+                            .or('assessment_type.eq.Regular,assessment_type.is.null');
                         if(assessmentsError) throw assessmentsError;
 
                         // 3. Extract unique students from assessments (to include promoted students)
@@ -289,22 +314,51 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                         const { data: student, error: studentError } = await supabase.from('students').select('*, class:classes(id,name)').eq('id', filters.student_id).single();
                         if (studentError) throw studentError;
 
+                        // Identify the class they were in for that specific term/year if not provided (parents)
+                        let targetClassId = filters.class_id;
+                        if (!targetClassId) {
+                             const { data: assessmentProbe } = await supabase
+                             .from('student_assessments')
+                             .select('class_id')
+                             .eq('student_id', filters.student_id)
+                             .eq('term', filters.termName)
+                             .eq('year', filters.year)
+                             .or('assessment_type.eq.Regular,assessment_type.is.null')
+                             .limit(1)
+                             .maybeSingle();
+
+                             if (assessmentProbe?.class_id) {
+                                 targetClassId = assessmentProbe.class_id;
+                             } else {
+                                 // Fallback to their current class if no historical assessments yet
+                                 targetClassId = student.class_id; 
+                             }
+                        }
+
+                        if (!targetClassId) throw new Error("Could not determine the student's class for this period.");
+
                         const { data: assessments, error: assessmentsError } = await supabase
                             .from('student_assessments')
                             .select('*, subject:subjects(name)')
                             .eq('student_id', filters.student_id)
-                            .eq('class_id', filters.class_id)
+                            .eq('class_id', targetClassId)
                             .eq('term', filters.termName)
-                            .eq('year', filters.year);
+                            .eq('year', filters.year)
+                            .or('assessment_type.eq.Regular,assessment_type.is.null');
                         if (assessmentsError) throw assessmentsError;
 
-                        const { data: allClassAssessments, error: allAssessmentsError } = await supabase.from('student_assessments').select('student_id, subject_id, total_score').eq('class_id', filters.class_id).eq('term', filters.termName).eq('year', filters.year);
+                        const { data: allClassAssessments, error: allAssessmentsError } = await supabase.from('student_assessments')
+                            .select('student_id, subject_id, total_score')
+                            .eq('class_id', targetClassId)
+                            .eq('term', filters.termName)
+                            .eq('year', filters.year)
+                            .or('assessment_type.eq.Regular,assessment_type.is.null');
                         if (allAssessmentsError) throw allAssessmentsError;
                         
                         const { data: termReports, error: termError } = await supabase.from('student_term_reports').select('*').eq('student_id', filters.student_id).eq('term', filters.termName).eq('year', filters.year).maybeSingle();
                         if (termError && termError.code !== '42P01') throw termError;
 
-                        const { count, error: countError } = await supabase.from('students').select('*', { count: 'exact', head: true }).eq('class_id', filters.class_id);
+                        const { count, error: countError } = await supabase.from('students').select('*', { count: 'exact', head: true }).eq('class_id', targetClassId);
                         if (countError) throw countError;
                         
                         data = { 
@@ -336,7 +390,13 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                     break;
                 }
                 case 'ClassPerformance': {
-                    const { data: scores, error: scoresError } = await supabase.from('student_assessments').select('*, student:students(full_name)').eq('class_id', filters.class_id).eq('subject_id', filters.subject_id).eq('term', filters.termName).eq('year', filters.year);
+                    const { data: scores, error: scoresError } = await supabase.from('student_assessments')
+                        .select('*, student:students(full_name)')
+                        .eq('class_id', filters.class_id)
+                        .eq('subject_id', filters.subject_id)
+                        .eq('term', filters.termName)
+                        .eq('year', filters.year)
+                        .or('assessment_type.eq.Regular,assessment_type.is.null');
                     if (scoresError) throw scoresError;
                     data = { scores };
                     break;
@@ -348,7 +408,8 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                         .select('*, student:students(*)')
                         .eq('class_id', filters.class_id)
                         .eq('term', filters.termName)
-                        .eq('year', filters.year);
+                        .eq('year', filters.year)
+                        .or('assessment_type.eq.Regular,assessment_type.is.null');
                     if (assessmentsError) throw assessmentsError;
 
                     // 2. Extract unique students from assessments
@@ -455,9 +516,47 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                     data = { teachers, records, startDate: filters.startDate, endDate: filters.endDate };
                     break;
                 }
+                case 'MockPerformanceAnalytics': {
+                    if (!filters.class_id) throw new Error("Please select a class for mock analytics.");
+                    
+                    // Fetch mock assessments for the class and tag
+                    const { data: assessments, error: assessmentsError } = await supabase
+                        .from('student_assessments')
+                        .select('*, subject:subjects(name), student:students(full_name, admission_number)')
+                        .eq('class_id', filters.class_id)
+                        .eq('assessment_type', 'Mock')
+                        .eq('mock_tag', filters.mock_tag)
+                        .eq('year', filters.year);
+
+                    if (assessmentsError) throw assessmentsError;
+
+                    // Group by students
+                    const studentMap: Record<string, any> = {};
+                    (assessments || []).forEach((a: any) => {
+                        if (!studentMap[a.student_id]) {
+                            studentMap[a.student_id] = {
+                                student: a.student,
+                                scores: [],
+                                total: 0
+                            };
+                        }
+                        studentMap[a.student_id].scores.push(a);
+                        studentMap[a.student_id].total += (a.total_score || 0);
+                    });
+
+                    const studentsAnalytics = Object.values(studentMap).sort((a, b) => b.total - a.total);
+                    data = { 
+                        analytics: studentsAnalytics, 
+                        classId: filters.class_id, 
+                        mockTag: filters.mock_tag,
+                        subjects: subjects
+                    };
+                    break;
+                }
             }
 
             setReportData(data);
+            return true;
         } catch (err: any) {
             console.error(err);
             let msg = err?.message || 'Failed to generate report';
@@ -467,12 +566,38 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                 msg = 'Reports Setup Missing: Please go to Settings > Advanced and run the "4. Reports & Attendance Setup" script.';
             }
             setError(msg);
+            return false;
         } finally {
             setIsLoading(false);
         }
     };
 
     const [totalCost, setTotalCost] = useState(REPORT_COST);
+
+    const handleRefund = async () => {
+        console.log("Providing refund for failed report...");
+        try {
+            const { data: latestProfile } = await supabase
+                .from('profiles')
+                .select('credit_balance')
+                .eq('id', profile.id)
+                .single();
+            
+            const latestBalance = Number(latestProfile?.credit_balance || 0);
+            await supabase
+                .from('profiles')
+                .update({ credit_balance: latestBalance + totalCost })
+                .eq('id', profile.id);
+            
+            setError(prev => {
+                const refundMsg = " (Deducted credits have been refunded to your wallet.)";
+                if (prev && prev.includes(refundMsg)) return prev;
+                return (prev || "") + refundMsg;
+            });
+        } catch (err) {
+            console.error("Refund failed:", err);
+        }
+    };
 
     // --- Payment Handling ---
     const handleGenerateClick = async () => {
@@ -539,7 +664,12 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
             setIsConfirmModalOpen(false);
             setIsProcessingPayment(false);
             
-            await executeReportGeneration();
+            const success = await executeReportGeneration();
+
+            // 4. Refund if generation failed
+            if (!success) {
+                await handleRefund();
+            }
 
         } catch (err: any) {
             setIsProcessingPayment(false);
@@ -674,21 +804,25 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
     };
 
     const renderFilters = () => {
-        const isAcademic = ['StudentReportCard', 'ClassPerformance', 'Broadsheet', 'PreviousRecords'].includes(reportType);
+        const isAcademic = ['StudentReportCard', 'ClassPerformance', 'Broadsheet', 'PreviousRecords', 'MockPerformanceAnalytics'].includes(reportType);
+        const isParent = profile.role === UserRole.Parent || profile.role === UserRole.Student;
+        
         return (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                 {reportType === 'PreviousRecords' ? (
                     <>
-                        <div>
-                            <label className="block text-sm">Class</label>
-                            <select value={filters.class_id || ''} onChange={e => setFilters({ ...filters, class_id: e.target.value, student_id: '' })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
-                                <option value="">Select Class</option>
-                                {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                            </select>
-                        </div>
+                        {!isParent && (
+                            <div>
+                                <label className="block text-sm">Class</label>
+                                <select value={filters.class_id || ''} onChange={e => setFilters({ ...filters, class_id: e.target.value, student_id: '' })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                    <option value="">Select Class</option>
+                                    {classes.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                            </div>
+                        )}
                         <div>
                             <label className="block text-sm">Student</label>
-                            <select value={filters.student_id || ''} onChange={e => setFilters({ ...filters, student_id: e.target.value })} disabled={!filters.class_id} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                            <select value={filters.student_id || ''} onChange={e => setFilters({ ...filters, student_id: e.target.value })} disabled={!isParent && !filters.class_id} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
                                 <option value="">Select Student</option>
                                 {students.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
                             </select>
@@ -709,7 +843,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                     </>
                 ) : (
                     <>
-                        {isAcademic || ['ClassList', 'PaymentHistory', 'AttendanceReport', 'StudentAttendanceReport', 'StudentProgressReport'].includes(reportType) ? (
+                        {(!isParent && (isAcademic || ['ClassList', 'PaymentHistory', 'AttendanceReport', 'StudentAttendanceReport', 'StudentProgressReport'].includes(reportType))) ? (
                             <div>
                                 <label className="block text-sm">Class</label>
                                 <select value={filters.class_id || ''} onChange={e => setFilters({ ...filters, class_id: e.target.value, student_id: '' })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
@@ -722,7 +856,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                         {(reportType === 'StudentReportCard' && !generateForAll) || reportType === 'PaymentHistory' || reportType === 'StudentAttendanceReport' || reportType === 'StudentProgressReport' ? (
                             <div>
                                 <label className="block text-sm">Student</label>
-                                <select value={filters.student_id || ''} onChange={e => setFilters({ ...filters, student_id: e.target.value })} disabled={!filters.class_id} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                <select value={filters.student_id || ''} onChange={e => setFilters({ ...filters, student_id: e.target.value })} disabled={!isParent && !filters.class_id} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
                                     <option value="">Select Student</option>
                                     {students.map(s => <option key={s.id} value={s.id}>{s.full_name}</option>)}
                                 </select>
@@ -777,23 +911,40 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                                     <input type="number" placeholder={`e.g. ${new Date().getFullYear()}`} value={filters.year || ''} onChange={e => setFilters({ ...filters, year: e.target.value ? parseInt(e.target.value, 10) : '' })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
                                 </div>
 
+                                {reportType === 'MockPerformanceAnalytics' && (
+                                    <div>
+                                        <label className="block text-sm">Mock Identifier</label>
+                                        <input
+                                            type="text"
+                                            placeholder="e.g. Mock 1"
+                                            value={filters.mock_tag || ''}
+                                            onChange={e => setFilters({ ...filters, mock_tag: e.target.value })}
+                                            className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                        />
+                                    </div>
+                                )}
+
                                 {reportType === 'StudentReportCard' ? (
                                 <>
-                                    <div>
-                                        <label className="block text-sm">Vacation Date</label>
-                                        <input type="date" value={filters.vacationDate || ''} onChange={e => setFilters({ ...filters, vacationDate: e.target.value })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
-                                    </div>
+                                    {!isParent && (
+                                        <>
+                                            <div>
+                                                <label className="block text-sm">Vacation Date</label>
+                                                <input type="date" value={filters.vacationDate || ''} onChange={e => setFilters({ ...filters, vacationDate: e.target.value })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+                                            </div>
 
-                                    <div>
-                                        <label className="block text-sm">Reopening Date</label>
-                                        <input type="date" value={filters.reopeningDate || ''} onChange={e => setFilters({ ...filters, reopeningDate: e.target.value })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
-                                    </div>
-                                    <div className="flex items-center col-span-full pt-2">
-                                        <input id="gen-all" type="checkbox" checked={generateForAll} onChange={(e) => setGenerateForAll(e.target.checked)} className="h-4 w-4 text-brand-600 border-gray-300 rounded focus:ring-brand-500"/>
-                                        <label htmlFor="gen-all" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
-                                            Generate for all students in class
-                                        </label>
-                                    </div>
+                                            <div>
+                                                <label className="block text-sm">Reopening Date</label>
+                                                <input type="date" value={filters.reopeningDate || ''} onChange={e => setFilters({ ...filters, reopeningDate: e.target.value })} className="w-full mt-1 p-2 border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+                                            </div>
+                                            <div className="flex items-center col-span-full pt-2">
+                                                <input id="gen-all" type="checkbox" checked={generateForAll} onChange={(e) => setGenerateForAll(e.target.checked)} className="h-4 w-4 text-brand-600 border-gray-300 rounded focus:ring-brand-500"/>
+                                                <label htmlFor="gen-all" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
+                                                    Generate for all students in class
+                                                </label>
+                                            </div>
+                                        </>
+                                    )}
                                 </>
                                 ) : null}
                             </>
@@ -841,6 +992,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ reportType, onBack, 
                 {reportType === 'AttendanceReport' && <AttendanceReport data={reportData} filters={filters} />}
                 {reportType === 'StudentAttendanceReport' && <StudentAttendanceReport data={reportData} />}
                 {reportType === 'TeacherAttendanceReport' && <TeacherAttendanceReport data={reportData} />}
+                {reportType === 'MockPerformanceAnalytics' && <MockPerformanceAnalytics data={reportData} />}
             </>
         );
     };

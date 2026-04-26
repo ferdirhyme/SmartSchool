@@ -24,12 +24,15 @@ const getOrdinal = (n: number) => {
 
 const getGradeInfo = (score: number | null) => {
     if (score === null || isNaN(score)) return { grade: '-', point: '-', remark: '-' };
-    if (score >= 80) return { grade: 'A', point: '1.00', remark: 'Excellent' };
-    if (score >= 70) return { grade: 'B', point: '2.00', remark: 'Very Good' };
-    if (score >= 65) return { grade: 'C', point: '3.00', remark: 'Good' };
-    if (score >= 55) return { grade: 'D', point: '4.00', remark: 'Credit' };
-    if (score >= 45) return { grade: 'E', point: '5.00', remark: 'Pass' };
-    return { grade: 'F', point: '6.00', remark: 'Fail' };
+    if (score >= 80) return { grade: 'A1', point: '1', remark: 'Excellent' };
+    if (score >= 70) return { grade: 'B2', point: '2', remark: 'Very Good' };
+    if (score >= 65) return { grade: 'B3', point: '3', remark: 'Good' };
+    if (score >= 60) return { grade: 'C4', point: '4', remark: 'Credit' };
+    if (score >= 55) return { grade: 'C5', point: '5', remark: 'Credit' };
+    if (score >= 50) return { grade: 'C6', point: '6', remark: 'Credit' };
+    if (score >= 45) return { grade: 'D7', point: '7', remark: 'Pass' };
+    if (score >= 40) return { grade: 'E8', point: '8', remark: 'Pass' };
+    return { grade: 'F9', point: '9', remark: 'Fail' };
 };
 
 export const StudentReportCard: React.FC<{ data: ReportData }> = ({ data }) => {
@@ -127,13 +130,24 @@ export const StudentReportCard: React.FC<{ data: ReportData }> = ({ data }) => {
                         <InfoField label="Gender" value={student.gender} />
                         <InfoField label="Class" value={student.class?.name} />
                         <InfoField label="Academic Year" value={academicYear} />
-                        <InfoField label="Vacation Date" value={vacationDate} />
                         <InfoField label="Academic Term" value={term} />
                         <InfoField label="Age" value={age} />
-                        <InfoField label="Re-Opening Date" value={reopeningDate} />
                         <InfoField label="Grand Score" value={`${grandTotal.toFixed(0)} / ${maxScore}`} />
                         <InfoField label="Class Position" value={getClassPosition()} />
                         <InfoField label="Attendance" value={attendanceString} />
+                        {(vacationDate || reopeningDate) ? (
+                           <>
+                             <InfoField label="Vacation Date" value={vacationDate} />
+                             <InfoField label="Re-Opening Date" value={reopeningDate} />
+                           </>
+                        ) : (
+                           <>
+                             <div className="font-bold border border-black px-2 py-1 bg-gray-100 hidden md:block"></div>
+                             <div className="border border-black px-2 py-1 hidden md:block"></div>
+                             <div className="font-bold border border-black px-2 py-1 bg-gray-100 hidden md:block"></div>
+                             <div className="border border-black px-2 py-1 hidden md:block"></div>
+                           </>
+                        )}
                     </div>
                     <div className="md:col-span-2 flex items-center justify-center border border-black p-2 bg-gray-100">
                         <div className="w-20 h-24 md:w-24 md:h-28 border-2 border-gray-400 flex items-center justify-center text-gray-400 bg-white">

@@ -110,6 +110,32 @@ export class SchoolService extends BaseService {
     }
   }
 
+  async deleteSchool(schoolId: string, reason: string, adminId: string): Promise<ServiceResponse<boolean>> {
+    try {
+      // 1. Log the deletion in audit_logs first (since it will cascade delete the logs later, 
+      // this is mainly for the moment of action, or we could have a separate platform_logs table)
+      await supabase.from('audit_logs').insert({
+        school_id: schoolId,
+        user_id: adminId,
+        action: 'DELETE_SCHOOL',
+        entity_type: 'school',
+        entity_id: schoolId,
+        new_data: { reason }
+      });
+
+      // 2. Perform the deletion
+      const { error } = await supabase
+        .from(this.table)
+        .delete()
+        .eq('id', schoolId);
+
+      if (error) throw error;
+      return { data: true, error: null };
+    } catch (err: any) {
+      return { data: false, error: this.handleError(err) };
+    }
+  }
+
   /**
    * Simplified check that always returns true now that subscriptions are disabled.
    */

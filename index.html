@@ -115,35 +115,38 @@
         .no-print {
           display: none !important;
         }
+        
         /* Reset layout constraints for printing */
-        body, #root, .flex, .h-screen, .overflow-hidden, .overflow-y-auto, .overflow-x-hidden {
+        body, #root, main, .flex, .h-screen, .min-h-screen, [class*="overflow-"] {
           height: auto !important;
+          max-height: none !important;
+          min-height: 0 !important;
           overflow: visible !important;
           position: static !important;
           display: block !important;
-        }
-        
-        /* Ensure the main content area expands */
-        main {
-          margin: 0 !important;
+          background: white !important;
           padding: 0 !important;
+          margin: 0 !important;
           width: 100% !important;
+          box-shadow: none !important;
         }
 
-        /* Hide sidebar and header explicitly if logic fails */
-        aside, header {
+        /* Hide all UI elements strictly */
+        aside, header, nav, footer, button, .no-print-visible {
           display: none !important;
         }
-
-        .print-area {
-          box-shadow: none !important;
-          border: none !important;
-          padding: 0 !important;
-          margin: 0 !important;
-          width: 100% !important;
-          background-color: white !important;
-          color: black !important;
+        
+        /* Force the print content to the top left */
+        .print-content {
+          display: block !important;
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          margin: 0;
+          padding: 0;
         }
+
         .page-break {
           page-break-after: always;
         }

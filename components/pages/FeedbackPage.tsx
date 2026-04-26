@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { Profile, UserRole, Feedback } from '../../types.ts';
 import { supabase } from '../../lib/supabase.ts';
-import { MessageSquare, Send, CheckCircle, Clock } from 'lucide-react';
+import { MessageSquare, Send, CheckCircle, Clock, Trash2 } from 'lucide-react';
 
 interface FeedbackPageProps {
   session: Session;
@@ -117,7 +117,38 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ session, profile }) => {
       ));
     } catch (err: any) {
       console.error('Error responding to feedback:', err);
-      alert('Failed to save response. Please try again.');
+      alert('Failed to save response: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  const handleDelete = async (feedbackId: string) => {
+    setError(null);
+    setSuccess(null);
+    try {
+      console.log('Attempting delete for:', feedbackId);
+      const { error: deleteError, count } = await supabase
+        .from('feedback')
+        .delete({ count: 'exact' })
+        .eq('id', feedbackId);
+
+      if (deleteError) {
+        console.error('Delete error details:', deleteError);
+        throw deleteError;
+      }
+      
+      console.log('Delete successful, count:', count);
+      if (count === 0) {
+        throw new Error('No records were deleted. This could be a permission issue (Security Policy) or the record was already removed.');
+      }
+
+      setFeedbacks(prev => prev.filter(f => f.id !== feedbackId));
+      setSuccess('Feedback deleted successfully.');
+    } catch (err: any) {
+      console.error('Error during deletion:', err);
+      const msg = err.message || 'Internal server error';
+      setError('Failed to delete feedback: ' + msg);
+      alert('Delete Error: ' + msg);
+      throw err; // Re-throw to allow component to handle it if needed
     }
   };
 
@@ -220,6 +251,7 @@ const FeedbackPage: React.FC<FeedbackPageProps> = ({ session, profile }) => {
                 feedback={feedback} 
                 isAdmin={isAdmin}
                 onRespond={handleRespond}
+                onDelete={handleDelete}
               />
             ))}
           </div>
@@ -233,8 +265,11 @@ const FeedbackCard: React.FC<{
   feedback: Feedback; 
   isAdmin: boolean;
   onRespond: (id: string, response: string, status: 'reviewed' | 'resolved') => void;
-}> = ({ feedback, isAdmin, onRespond }) => {
+  onDelete: (id: string) => Promise<void>;
+}> = ({ feedback, isAdmin, onRespond, onDelete }) => {
   const [isResponding, setIsResponding] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [responseText, setResponseText] = useState(feedback.response || '');
   const [status, setStatus] = useState<'reviewed' | 'resolved'>(feedback.status === 'resolved' ? 'resolved' : 'reviewed');
 
@@ -269,6 +304,46 @@ const FeedbackCard: React.FC<{
         
         <div className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap bg-gray-50 dark:bg-gray-900/50 p-4 rounded-xl border border-gray-100 dark:border-gray-800">
           {feedback.message}
+        </div>
+
+        <div className="mt-4 flex items-center justify-between">
+          {!showDeleteConfirm ? (
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+              title="Delete Feedback"
+            >
+              <Trash2 className="w-4 h-4" />
+              Delete
+            </button>
+          ) : (
+            <div className="flex items-center gap-3 animate-in fade-in slide-in-from-left-2 duration-200">
+              <span className="text-sm font-bold text-red-600">Delete this?</span>
+              <button
+                onClick={async () => {
+                  setIsDeleting(true);
+                  try {
+                    await onDelete(feedback.id);
+                  } catch (err) {
+                    setShowDeleteConfirm(false);
+                  } finally {
+                    setIsDeleting(false);
+                  }
+                }}
+                disabled={isDeleting}
+                className="px-3 py-1 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {isDeleting ? 'Deleting...' : 'Confirm'}
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+                className="px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
 
         {feedback.response && !isResponding && (

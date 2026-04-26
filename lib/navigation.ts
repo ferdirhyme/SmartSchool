@@ -17,7 +17,7 @@ import {
   BillingIcon
 } from '../components/icons/NavIcons.tsx';
 import { UserRole } from '../types.ts';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Users, Video } from 'lucide-react';
 
 export interface NavItem {
   label: string;
@@ -32,16 +32,18 @@ const headteacherNavItems: NavItem[] = [
     icon: StudentsIcon, 
     subItems: [
       { label: 'Student Info' },
-      { label: 'Add Students' }
+      { label: 'Add Students' },
+      { label: 'Promotion' }
     ]
   },
   { 
-    label: 'Teachers', 
-    icon: TeachersIcon,
+    label: 'Administration', 
+    icon: Users,
     subItems: [
         { label: 'Staff List' },
         { label: 'Staff Authorizations' },
-        { label: 'Staff Attendance' }
+        { label: 'Staff Attendance' },
+        { label: 'Guardian Management' }
     ]
   },
   { 
@@ -51,14 +53,30 @@ const headteacherNavItems: NavItem[] = [
         { label: 'Manage Classes' },
         { label: 'Manage Subjects' },
         { label: 'Timetable' },
+        { label: 'Lesson Notes' },
+        { label: 'Scheme of Learning' },
         { label: 'Term Remarks' }
     ]
   },
-  { label: 'Promotion', icon: PromotionIcon },
-  { label: 'Fees', icon: FeesIcon },
-  { label: 'Billing', icon: BillingIcon },
-  { label: 'Messages', icon: MessagesIcon },
-  { label: 'Manage Announcements', icon: AnnouncementIcon },
+  { 
+    label: 'Finance', 
+    icon: FeesIcon,
+    subItems: [
+        { label: 'Fees Management' },
+        { label: 'Expense Tracker' },
+        { label: 'Scholarships' },
+        { label: 'Billing' }
+    ]
+  },
+  { 
+    label: 'Communication', 
+    icon: MessagesIcon,
+    subItems: [
+        { label: 'Messages' },
+        { label: 'PTM Scheduler' },
+        { label: 'Manage Announcements' }
+    ]
+  },
   { label: 'Reports', icon: ReportsIcon },
   { label: 'Profile', icon: ProfileIcon },
   { label: 'Feedback', icon: MessageSquare },
@@ -80,9 +98,13 @@ const teacherNavItems: NavItem[] = [
     icon: AcademicsIcon,
     subItems: [
         { label: 'Assessment' },
+        { label: 'Lesson Notes' },
+        { label: 'Scheme of Learning' },
         { label: 'Term Remarks' }
     ]
   },
+  { label: 'Guardian Management', icon: Users },
+  { label: 'PTM Scheduler', icon: Video },
   { label: 'Reports', icon: ReportsIcon },
   { label: 'Messages', icon: MessagesIcon },
   { label: 'Billing', icon: BillingIcon },
@@ -105,6 +127,7 @@ const parentNavItems: NavItem[] = [
   { label: 'Reports', icon: ReportsIcon },
   { label: 'Messages', icon: MessagesIcon },
   { label: 'Billing', icon: BillingIcon },
+  { label: 'PTM Scheduler', icon: Video },
   { label: 'Profile', icon: ProfileIcon },
   { label: 'Feedback', icon: MessageSquare },
   { label: 'Settings', icon: SettingsIcon },

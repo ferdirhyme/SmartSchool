@@ -1,7 +1,9 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase.ts';
+import { useSettings } from '../../contexts/SettingsContext.tsx';
+import { Wifi, WifiOff, CloudSync, Save } from 'lucide-react';
 // Imported robust types to fix property access errors
 import { TeacherProfile, Student, StudentAssessment, Class, Subject, Profile } from '../../types.ts';
 
@@ -35,6 +37,7 @@ const WEIGHTS = {
 type WeightKeys = keyof typeof WEIGHTS.PRIMARY;
 
 const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }) => {
+    const { settings } = useSettings();
     // Component State
     const [teacherProfile, setTeacherProfile] = useState<TeacherProfile | null>(null);
     const [teachableClasses, setTeachableClasses] = useState<Class[]>([]);
@@ -44,10 +47,16 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
     const [subjectsForClass, setSubjectsForClass] = useState<Subject[]>([]);
     const [students, setStudents] = useState<Student[]>([]);
     const [selectedSubjectId, setSelectedSubjectId] = useState<string>('');
-    const [selectedTermName, setSelectedTermName] = useState<string>('Term 1');
-    const [selectedYear, setSelectedYear] = useState<number | ''>(new Date().getFullYear());
+    const [selectedTermName, setSelectedTermName] = useState<string>(settings?.current_term || 'Term 1');
+    const [selectedYear, setSelectedYear] = useState<number | ''>(settings?.current_year || new Date().getFullYear());
     const [scores, setScores] = useState<StudentScores>({});
     const [searchTerm, setSearchTerm] = useState('');
+    
+    // New Feature States
+    const [assessmentType, setAssessmentType] = useState<'Regular' | 'Mock'>('Regular');
+    const [mockTag, setMockTag] = useState<string>('Mock 1');
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
+    const [syncQueue, setSyncQueue] = useState<string[]>([]); // Student IDs that need syncing
     
     // UI State
     const [isLoading, setIsLoading] = useState(true);
@@ -229,7 +238,26 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
         fetchSubjects();
     }, [selectedClassId, allTeacherSubjects, teacherProfile, userProfile.school_id]);
 
-    // Fetch students and their scores when class, subject, or term changes
+    // --- Offline Logic ---
+    useEffect(() => {
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    // Sync when online changes to true
+    useEffect(() => {
+        if (isOnline && syncQueue.length > 0) {
+            handleSaveScores();
+        }
+    }, [isOnline]);
+
+    // Fetch students and their scores when filters change
     useEffect(() => {
         const fetchStudentsAndScores = async () => {
             if (!selectedClassId || !selectedSubjectId || !selectedTermName || !selectedYear) {
@@ -251,7 +279,7 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
                 if (studentError) throw studentError;
                 setStudents(studentData || []);
                 
-                const { data: scoreData, error: scoreError } = await supabase
+                let query = supabase
                     .from('student_assessments')
                     .select('*')
                     .eq('class_id', selectedClassId)
@@ -259,6 +287,15 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
                     .eq('term', selectedTermName)
                     .eq('year', selectedYear)
                     .eq('school_id', userProfile.school_id);
+
+                if (assessmentType === 'Mock') {
+                    query = query.eq('assessment_type', 'Mock').eq('mock_tag', mockTag);
+                } else {
+                    // For Regular assessments, include 'Regular', 'N/A' and NULL (legacy) records
+                    query = query.or('assessment_type.eq.Regular,assessment_type.is.null,mock_tag.eq.N/A');
+                }
+
+                const { data: scoreData, error: scoreError } = await query;
 
                 if (scoreError) throw scoreError;
                 
@@ -286,7 +323,7 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
         };
 
         fetchStudentsAndScores();
-    }, [selectedClassId, selectedSubjectId, selectedTermName, selectedYear, userProfile.school_id]);
+    }, [selectedClassId, selectedSubjectId, selectedTermName, selectedYear, assessmentType, mockTag, userProfile.school_id]);
     
     const filteredStudents = useMemo(() => {
         if (!searchTerm.trim()) {
@@ -317,6 +354,11 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
                 [field]: finalValue,
             }
         }));
+
+        // Add to sync queue for offline support
+        if (!syncQueue.includes(studentId)) {
+            setSyncQueue(prev => [...prev, studentId]);
+        }
     };
     
     const handleSaveScores = async () => {
@@ -325,12 +367,21 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
             return;
         }
 
+        if (!isOnline) {
+            setMessage({ 
+                type: 'success', 
+                text: `Offline Mode: Changes for ${syncQueue.length} students are saved locally and will auto-sync when you reconnect.` 
+            });
+            return;
+        }
+
         setIsSaving(true);
         setMessage(null);
         
-        const recordsToUpsert = Object.entries(scores)
-            .filter(([, scoreData]: [string, ScoreInfo]) => Object.values(scoreData).some(v => v != null && (typeof v !== 'string' || v.trim() !== '')))
-            .map(([studentId, scoreData]: [string, ScoreInfo]) => {
+        const recordsToUpsert = syncQueue
+            .filter(studentId => scores[studentId])
+            .map(studentId => {
+                const scoreData = scores[studentId];
                 const ca_score = (Number(scoreData.class_exercises) || 0) +
                                (Number(scoreData.class_tests) || 0) +
                                (Number(scoreData.project_work) || 0) +
@@ -352,7 +403,9 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
                     exam_score: scoreData.exam_score,
                     total_score: total_score,
                     remarks: scoreData.remarks,
-                    school_id: userProfile.school_id
+                    school_id: userProfile.school_id,
+                    assessment_type: assessmentType,
+                    mock_tag: assessmentType === 'Mock' ? mockTag : 'N/A'
                 };
             });
 
@@ -364,14 +417,15 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
 
         try {
             const { error } = await supabase.from('student_assessments').upsert(recordsToUpsert, {
-                onConflict: 'school_id,student_id,class_id,subject_id,term,year'
+                onConflict: 'school_id,student_id,class_id,subject_id,term,year,assessment_type,mock_tag'
             });
 
             if (error) throw error;
-            setMessage({ type: 'success', text: 'Scores saved successfully!' });
+            setMessage({ type: 'success', text: `Successfully saved ${recordsToUpsert.length} records!` });
+            setSyncQueue([]);
         } catch (err: any) {
             if (err.message && err.message.includes('no unique or exclusion constraint matching the ON CONFLICT')) {
-                setMessage({ type: 'error', text: 'Database schema error: The student_assessments table has an incorrect structure. Please run the provided SQL script to fix it. Note: This will erase all existing assessment data.' });
+                setMessage({ type: 'error', text: 'Database schema error: Please run the "Ghanaian School Optimization" script in Settings > Advanced.' });
             } else {
                 setMessage({ type: 'error', text: err.message || 'Failed to save scores.' });
             }
@@ -418,51 +472,127 @@ const Assessment: React.FC<AssessmentProps> = ({ session, profile: userProfile }
     }
     
     return (
-        <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-6">Student Assessment</h1>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Class</label>
-                    <select id="class-select" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)} className="w-full mt-1 p-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 focus:ring-brand-500 focus:border-brand-500">
-                        {teachableClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    </select>
-                </div>
-                <div>
-                    <label htmlFor="subject-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Subject</label>
-                    <select id="subject-select" value={selectedSubjectId} onChange={e => setSelectedSubjectId(e.target.value)} className="w-full mt-1 p-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 focus:ring-brand-500 focus:border-brand-500" disabled={subjectsForClass.length === 0}>
-                        {subjectsForClass.length > 0 ? (
-                            subjectsForClass.map(s => <option key={s.id} value={s.id}>{s.name}</option>)
-                        ) : (
-                            <option>No subjects assigned to you</option>
-                        )}
-                    </select>
-                </div>
-                <div>
-                    <label htmlFor="term-name-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Term</label>
-                    <select
-                        id="term-name-select"
-                        value={selectedTermName}
-                        onChange={e => setSelectedTermName(e.target.value)}
-                        className="w-full mt-1 p-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 focus:ring-brand-500 focus:border-brand-500"
-                    >
-                        <option value="Term 1">Term 1</option>
-                        <option value="Term 2">Term 2</option>
-                        <option value="Term 3">Term 3</option>
-                    </select>
-                </div>
-                <div>
-                    <label htmlFor="year-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Year</label>
-                    <input
-                        id="year-input"
-                        type="number"
-                        value={selectedYear === '' || isNaN(selectedYear as number) ? '' : selectedYear}
-                        onChange={e => setSelectedYear(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
-                        className="w-full mt-1 p-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 focus:ring-brand-500 focus:border-brand-500"
-                        placeholder="e.g., 2024"
-                    />
+        <div className="space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-tight">Student Assessment</h1>
+                <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest border transition-all ${isOnline ? 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800/50 dark:text-green-400' : 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800/50 dark:text-amber-400'}`}>
+                    {isOnline ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+                    {isOnline ? 'System Online' : 'System Offline (Offline-First Mode)'}
                 </div>
             </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                <div className="lg:col-span-3 space-y-6 p-8 bg-white dark:bg-gray-800 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+                        <div>
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Academic Class</label>
+                            <select id="class-select" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)} className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-2xl dark:bg-gray-900/50 dark:border-gray-700 dark:text-white focus:ring-4 focus:ring-brand-500/10 font-bold transition-all">
+                                {teachableClasses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label htmlFor="subject-select" className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Subject Matter</label>
+                            <select id="subject-select" value={selectedSubjectId} onChange={e => setSelectedSubjectId(e.target.value)} className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-2xl dark:bg-gray-900/50 dark:border-gray-700 dark:text-white focus:ring-4 focus:ring-brand-500/10 font-bold transition-all disabled:opacity-50" disabled={subjectsForClass.length === 0}>
+                                {subjectsForClass.length > 0 ? (
+                                    subjectsForClass.map(s => <option key={s.id} value={s.id}>{s.name}</option>)
+                                ) : (
+                                    <option>No subjects assigned</option>
+                                )}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Academic Term</label>
+                            <select
+                                value={selectedTermName}
+                                onChange={e => setSelectedTermName(e.target.value)}
+                                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-2xl dark:bg-gray-900/50 dark:border-gray-700 dark:text-white focus:ring-4 focus:ring-brand-500/10 font-bold transition-all"
+                            >
+                                <option value="Term 1">Term 1</option>
+                                <option value="Term 2">Term 2</option>
+                                <option value="Term 3">Term 3</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Academic Year</label>
+                            <input
+                                type="number"
+                                value={selectedYear === '' || isNaN(selectedYear as number) ? '' : selectedYear}
+                                onChange={e => setSelectedYear(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                                className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-2xl dark:bg-gray-900/50 dark:border-gray-700 dark:text-white focus:ring-4 focus:ring-brand-500/10 font-bold transition-all"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-8 bg-brand-600 rounded-3xl shadow-lg border border-brand-500 flex flex-col justify-between text-white">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-80 mb-3 ml-1">Assessment Profile</p>
+                        <div className="flex bg-brand-700/50 p-1 rounded-2xl mb-4">
+                            <button 
+                                onClick={() => setAssessmentType('Regular')}
+                                className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${assessmentType === 'Regular' ? 'bg-white text-brand-600 shadow-sm' : 'text-white/60 hover:text-white'}`}
+                            >
+                                Regular
+                            </button>
+                            <button 
+                                onClick={() => setAssessmentType('Mock')}
+                                className={`flex-1 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${assessmentType === 'Mock' ? 'bg-white text-brand-600 shadow-sm' : 'text-white/60 hover:text-white'}`}
+                            >
+                                Mock
+                            </button>
+                        </div>
+
+                        {assessmentType === 'Mock' && (
+                            <div className="animate-in fade-in slide-in-from-top-2">
+                                <label className="block text-[10px] font-black uppercase tracking-widest mb-1.5 opacity-80 ml-1">Mock Identifier</label>
+                                <input 
+                                    type="text"
+                                    value={mockTag}
+                                    onChange={e => setMockTag(e.target.value)}
+                                    placeholder="e.g. Pre-BECE Mock"
+                                    className="w-full p-3 bg-brand-700/50 border border-brand-500/30 rounded-2xl text-white placeholder-white/40 text-sm focus:outline-none focus:ring-2 focus:ring-white/20"
+                                />
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Sync Queue Banner */}
+            {syncQueue.length > 0 && (
+                <div className={`mb-6 p-5 rounded-3xl border flex items-center justify-between shadow-sm animate-in zoom-in-95 duration-300 ${isOnline ? 'bg-brand-50 border-brand-200 dark:bg-brand-900/20 dark:border-brand-800/50' : 'bg-amber-50 border-amber-200 dark:bg-amber-900/20 dark:border-amber-800/50'}`}>
+                    <div className="flex items-center gap-4">
+                         <div className={`p-3 rounded-2xl ${isOnline ? 'bg-brand-100 text-brand-600 dark:bg-brand-900/50 dark:text-brand-400' : 'bg-amber-100 text-amber-600 dark:bg-amber-900/50 dark:text-amber-400'}`}>
+                            {isOnline ? <CloudSync className="w-6 h-6" /> : <WifiOff className="w-6 h-6" />}
+                         </div>
+                        <div>
+                            <p className={`font-bold ${isOnline ? 'text-brand-900 dark:text-brand-100' : 'text-amber-900 dark:text-amber-100'}`}>
+                                {isOnline ? 'Synchronization Pending' : 'Local Storage Active'}
+                            </p>
+                            <p className={`text-xs mt-0.5 ${isOnline ? 'text-brand-600 dark:text-brand-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                                {isOnline 
+                                    ? `You have ${syncQueue.length} record updates ready to be synced with the server.` 
+                                    : `Offline: ${syncQueue.length} records saved locally. Reconnect to sync.`
+                                }
+                            </p>
+                        </div>
+                    </div>
+                    {isOnline ? (
+                        <button 
+                            onClick={handleSaveScores}
+                            disabled={isSaving}
+                            className="flex items-center gap-2.5 px-6 py-3 bg-brand-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-brand-500/30 hover:bg-brand-700 active:scale-[0.98] transition-all disabled:opacity-50"
+                        >
+                            {isSaving ? <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : <Save className="w-4 h-4" />}
+                            Sync To Server
+                        </button>
+                    ) : (
+                         <div className="px-4 py-2 bg-amber-100 text-amber-700 rounded-xl text-[10px] font-black uppercase tracking-widest">
+                            Paused
+                         </div>
+                    )}
+                </div>
+            )}
 
             <div className="mb-6">
                 <label htmlFor="student-search" className="sr-only">Search Students</label>

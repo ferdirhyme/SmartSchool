@@ -24,6 +24,37 @@ const App: React.FC = () => {
   const lastSessionUserId = React.useRef<string | null>(null);
   const loadingTimeoutRef = React.useRef<any>(null);
 
+  useEffect(() => {
+    // Admin auto-fix for missing RPC
+    if (profile?.role === 'Admin') {
+        const checkAndFixRPC = async () => {
+            try {
+                const { error: testError } = await supabase.rpc('get_teacher_id_by_auth_email');
+                if (testError && (testError.message.includes('Could not find the function') || testError.code === 'PGRST202')) {
+                    const fixScript = `
+CREATE OR REPLACE FUNCTION public.get_teacher_id_by_auth_email()
+RETURNS uuid AS $$
+DECLARE
+    v_teacher_id uuid;
+    v_email text;
+BEGIN
+    v_email := (auth.jwt() ->> 'email');
+    SELECT id INTO v_teacher_id FROM public.teachers WHERE email = v_email LIMIT 1;
+    RETURN v_teacher_id;
+END;
+$$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
+`;
+                    await supabase.rpc('execute_admin_sql', { sql_script: fixScript });
+                    console.log("Auto-fixed get_teacher_id_by_auth_email RPC.");
+                }
+            } catch (e) {
+                console.error("Failed to check/fix RPC:", e);
+            }
+        };
+        checkAndFixRPC();
+    }
+  }, [profile?.role]);
+
   const fetchProfile = async (uid: string) => {
     try {
       const { data, error } = await supabase
@@ -34,6 +65,25 @@ const App: React.FC = () => {
       
       if (error) throw error;
       setProfile(data);
+
+      // Track platform usage (device density)
+      const ua = navigator.userAgent;
+      let deviceType = "Desktop";
+      if (/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i.test(ua)) deviceType = "Tablet";
+      else if (/Mobile|iP(hone|od)|Android|BlackBerry|IEMobile|Kindle|Silk-Accelerated|(hpw|web)OS|Opera M(obi|ini)/.test(ua)) deviceType = "Mobile";
+
+      supabase.from('platform_usage').upsert({
+        user_id: uid,
+        device_type: deviceType,
+        browser: ua.split(') ')[1]?.split(' ')[0] || 'Unknown',
+        os: navigator.platform,
+        last_seen: new Date().toISOString()
+      }, { onConflict: 'user_id, device_type' }).then(({ error }) => {
+          if (error && error.code !== 'PGRST116') { // Ignore if table doesn't exist yet
+              // silent fail for usage tracking
+          }
+      });
+
     } catch (err: any) {
       if (err instanceof TypeError && err.message === 'Failed to fetch') {
         console.error("Profile Fetch Failed: Network error. Please check if Supabase is reachable.");
@@ -160,6 +210,26 @@ const App: React.FC = () => {
         ) : (
           <SignupPage onNavigateToLogin={() => setView('login')} />
         )
+      ) : profile.is_suspended ? (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-gray-900 p-4">
+          <div className="max-w-md w-full bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-xl border border-red-100 dark:border-red-900/30 text-center">
+            <div className="w-20 h-20 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+              <svg className="w-10 h-10 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m0 0v2m0-2h2m-2 0H10m11 3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Account Suspended</h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-6">
+              Your account has been suspended by the platform administrator. Please contact support if you believe this is an error.
+            </p>
+            <button 
+              onClick={() => supabase.auth.signOut()}
+              className="w-full bg-gray-900 dark:bg-white dark:text-gray-900 text-white py-3 rounded-xl font-bold hover:opacity-90 transition-opacity"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
       ) : (!profile.is_onboarded && profile.role !== UserRole.Admin) ? (
         <PendingOnboarding fullName={profile.full_name} />
       ) : (

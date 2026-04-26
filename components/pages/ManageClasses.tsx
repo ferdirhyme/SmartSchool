@@ -2,6 +2,7 @@
 import React, { useState, useEffect, FormEvent } from 'react';
 import { supabase } from '../../lib/supabase.ts';
 import { Class, Profile, Teacher } from '../../types.ts';
+import ConfirmationDialog from '../ui/ConfirmationDialog.tsx';
 
 interface ManageClassesProps {
     profile: Profile;
@@ -15,6 +16,11 @@ const ManageClasses: React.FC<ManageClassesProps> = ({ profile }) => {
     const [editingClass, setEditingClass] = useState<Class | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [confirmation, setConfirmation] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    } | null>(null);
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -160,18 +166,22 @@ const ManageClasses: React.FC<ManageClassesProps> = ({ profile }) => {
     };
 
     const handleDelete = async (classToDelete: Class) => {
-        if (window.confirm(`Are you sure you want to delete ${classToDelete.name}?`)) {
-            const { error } = await supabase
-                .from('classes')
-                .delete()
-                .eq('id', classToDelete.id);
-            
-            if (error) {
-                setError(error.message);
-            } else {
-                setClasses(prev => prev.filter(c => c.id !== classToDelete.id));
+        setConfirmation({
+            title: `Delete Class: ${classToDelete.name}?`,
+            message: "All student enrollments and records associated with this class will be permanently affected. This action cannot be undone.",
+            onConfirm: async () => {
+                const { error } = await supabase
+                    .from('classes')
+                    .delete()
+                    .eq('id', classToDelete.id);
+                
+                if (error) {
+                    setError(error.message);
+                } else {
+                    setClasses(prev => prev.filter(c => c.id !== classToDelete.id));
+                }
             }
-        }
+        });
     };
 
     const startEditing = (cls: Class) => {
@@ -275,6 +285,14 @@ const ManageClasses: React.FC<ManageClassesProps> = ({ profile }) => {
                     <p className="text-gray-500 dark:text-gray-400">No classes have been added yet.</p>
                 )}
             </div>
+
+            <ConfirmationDialog 
+                isOpen={!!confirmation}
+                onClose={() => setConfirmation(null)}
+                onConfirm={confirmation?.onConfirm || (() => {})}
+                title={confirmation?.title || ''}
+                message={confirmation?.message || ''}
+            />
         </div>
     );
 }

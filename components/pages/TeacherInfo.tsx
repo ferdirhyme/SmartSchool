@@ -3,7 +3,8 @@ import { supabase } from '../../lib/supabase.ts';
 import { TeacherProfile, Class, Subject, TeachableClassLink, Profile } from '../../types.ts';
 import ImageUpload from '../common/ImageUpload.tsx';
 import { Users, BookOpen, Award, Search, UserCheck, Briefcase } from 'lucide-react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
+import ConfirmationDialog from '../ui/ConfirmationDialog.tsx';
 
 interface TeacherInfoProps {
     profile: Profile;
@@ -22,6 +23,11 @@ const TeacherInfo: React.FC<TeacherInfoProps> = ({ profile }) => {
     const [isUpdating, setIsUpdating] = useState(false);
     const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
     const [assigningTeacher, setAssigningTeacher] = useState<TeacherProfile | null>(null);
+    const [confirmation, setConfirmation] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
 
@@ -276,20 +282,56 @@ const TeacherInfo: React.FC<TeacherInfoProps> = ({ profile }) => {
     };
     
     const handleDelete = async (teacherToDelete: TeacherProfile) => {
-        if (window.confirm(`Are you sure you want to delete ${teacherToDelete.full_name}? This action cannot be undone.`)) {
-            setIsLoading(true);
-            const { error: deleteError } = await supabase.from('teachers').delete().eq('id', teacherToDelete.id);
-            if (deleteError) {
-                setError(`Failed to delete teacher: ${deleteError.message}`);
-            } else {
-                setMessage(`${teacherToDelete.full_name} has been deleted successfully.`);
-                setTeachers(prev => prev.filter(t => t.id !== teacherToDelete.id));
+        setConfirmation({
+            title: `Delete ${teacherToDelete.full_name}?`,
+            message: `Are you sure you want to remove this teacher from the school? All their teaching records will be affected.`,
+            onConfirm: async () => {
+                setIsLoading(true);
+                const { error: deleteError } = await supabase.from('teachers').delete().eq('id', teacherToDelete.id);
+                if (deleteError) {
+                    setError(`Failed to delete teacher: ${deleteError.message}`);
+                } else {
+                    setMessage(`${teacherToDelete.full_name} has been deleted successfully.`);
+                    setTeachers(prev => prev.filter(t => t.id !== teacherToDelete.id));
+                    if (selectedTeacher?.id === teacherToDelete.id) {
+                        setSelectedTeacher(null);
+                    }
+                }
+                setIsLoading(false);
             }
-            setIsLoading(false);
-        }
+        });
     };
 
-    if (isLoading && !teachers.length) return <p>Loading teachers...</p>;
+    if (isLoading && !teachers.length) {
+        return (
+            <div className="space-y-8 animate-pulse">
+                <div className="flex justify-between items-center">
+                    <div className="h-10 w-48 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
+                    <div className="h-10 w-32 bg-gray-200 dark:bg-gray-700 rounded-full"></div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {[1, 2, 3].map((i) => (
+                        <div key={i} className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 h-32"></div>
+                    ))}
+                </div>
+
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 h-40"></div>
+
+                <div className="flex gap-4">
+                    <div className="flex-1 h-12 bg-gray-200 dark:bg-gray-700 rounded-xl"></div>
+                    <div className="w-48 h-12 bg-gray-200 dark:bg-gray-700 rounded-xl"></div>
+                </div>
+
+                <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 overflow-hidden">
+                    <div className="h-12 bg-gray-50 dark:bg-gray-700"></div>
+                    {[1, 2, 3, 4, 5].map((i) => (
+                        <div key={i} className="h-16 border-t border-gray-100 dark:border-gray-700"></div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
     
     const inputClasses = "block w-full p-3 bg-gray-50 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:placeholder-gray-400";
 
@@ -441,7 +483,8 @@ const TeacherInfo: React.FC<TeacherInfoProps> = ({ profile }) => {
     }
 
     return (
-        <div className="space-y-8">
+        <>
+            <div className="space-y-8">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Staff List</h1>
                 <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 px-4 py-2 rounded-full shadow-sm">
@@ -746,7 +789,16 @@ const TeacherInfo: React.FC<TeacherInfoProps> = ({ profile }) => {
                     </motion.div>
                 </div>
             )}
+
+            <ConfirmationDialog 
+                isOpen={!!confirmation}
+                onClose={() => setConfirmation(null)}
+                onConfirm={confirmation?.onConfirm || (() => {})}
+                title={confirmation?.title || ''}
+                message={confirmation?.message || ''}
+            />
         </div>
+        </>
     );
 };
 

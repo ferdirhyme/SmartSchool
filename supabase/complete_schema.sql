@@ -277,11 +277,58 @@ CREATE TABLE IF NOT EXISTS messages (
     content TEXT NOT NULL
 );
 
--- 24. Auth Trigger
+-- 24. PTM Meetings
+CREATE TABLE IF NOT EXISTS ptm_meetings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    school_id UUID REFERENCES schools(id) ON DELETE CASCADE,
+    teacher_id UUID REFERENCES teachers(id) ON DELETE CASCADE,
+    student_id UUID REFERENCES students(id) ON DELETE CASCADE,
+    parent_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    scheduled_at TIMESTAMPTZ,
+    duration INTEGER,
+    status TEXT CHECK (status IN ('scheduled', 'completed', 'canceled')),
+    notes TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE ptm_meetings ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Headteachers manage school meetings" ON ptm_meetings
+    FOR ALL USING (
+        EXISTS (
+            SELECT 1 FROM profiles AS p
+            WHERE p.id = auth.uid() 
+            AND p.role = 'Headteacher' 
+            AND p.school_id = ptm_meetings.school_id
+        )
+    );
+
+CREATE POLICY "Teachers can manage their own ptm_meetings" ON ptm_meetings
+    FOR ALL USING (
+        EXISTS (
+            SELECT 1 FROM teachers AS t
+            WHERE t.id = ptm_meetings.teacher_id 
+            AND t.email = (SELECT email FROM profiles WHERE id = auth.uid())
+        )
+    );
+
+CREATE POLICY "Parents can view their ptm_meetings" ON ptm_meetings
+    FOR SELECT USING (
+        parent_id = auth.uid() OR
+        EXISTS (
+            SELECT 1 FROM students s
+            WHERE s.id = ptm_meetings.student_id AND
+            s.admission_number = ANY(COALESCE((SELECT admission_numbers FROM profiles WHERE id = auth.uid()), ARRAY[]::text[]))
+        )
+    );
+
+-- 25. Auth Trigger
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 DECLARE
   assigned_role text;
+  found_school_id uuid := NULL;
+  extracted_admissions text[];
 BEGIN
   -- 1. Determine Role Securely (Using text to avoid enum caching issues in persistent connections)
   IF new.email = 'ferditgh@gmail.com' THEN
@@ -290,18 +337,38 @@ BEGIN
     assigned_role := COALESCE(new.raw_user_meta_data->>'role', 'Teacher');
   END IF;
 
-  -- 2. Create Profile (If this fails, the whole signup rolls back)
-  INSERT INTO public.profiles (id, full_name, email, role, is_onboarded)
+  -- 2. Extract admission numbers if Parent/Student
+  IF assigned_role IN ('Parent', 'Student') AND new.raw_user_meta_data->>'admission_numbers' IS NOT NULL THEN
+    -- Safely cast the string array from metadata to text array
+    extracted_admissions := ARRAY(SELECT jsonb_array_elements_text(new.raw_user_meta_data->'admission_numbers'));
+    
+    -- 3. Auto-link school if admission number is provided and matching student found
+    IF array_length(extracted_admissions, 1) > 0 THEN
+      found_school_id := (
+        SELECT school_id 
+        FROM public.students 
+        WHERE admission_number = ANY(extracted_admissions) 
+        LIMIT 1
+      );
+    END IF;
+  ELSE
+    extracted_admissions := ARRAY[]::text[];
+  END IF;
+
+  -- 4. Create Profile (If this fails, the whole signup rolls back)
+  INSERT INTO public.profiles (id, full_name, email, role, is_onboarded, admission_numbers, school_id)
   VALUES (
     new.id, 
     COALESCE(new.raw_user_meta_data->>'full_name', 'New User'), 
     new.email,
     assigned_role, 
-    FALSE
+    CASE WHEN found_school_id IS NOT NULL THEN TRUE ELSE FALSE END,
+    extracted_admissions,
+    found_school_id
   )
   ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email;
 
-  -- 3. Auto-populate teachers table if applicable
+  -- 5. Auto-populate teachers table if applicable
   IF assigned_role IN ('Teacher', 'Headteacher') THEN
     INSERT INTO public.teachers (full_name, email, staff_id)
     VALUES (
@@ -388,6 +455,16 @@ CREATE POLICY "Admins can view all profiles" ON profiles
 
 CREATE POLICY "Admins can update all profiles" ON profiles
     FOR UPDATE USING (public.is_admin());
+
+CREATE POLICY "Headteachers can update profiles in their school" ON profiles
+    FOR UPDATE USING (
+        EXISTS (
+            SELECT 1 FROM profiles AS p
+            WHERE p.id = auth.uid() 
+            AND p.role = 'Headteacher' 
+            AND p.school_id = profiles.school_id
+        )
+    );
 
 CREATE POLICY "Admins can delete all profiles" ON profiles
     FOR DELETE USING (public.is_admin());

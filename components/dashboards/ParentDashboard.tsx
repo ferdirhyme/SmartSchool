@@ -11,6 +11,7 @@ import ReportsPage from '../pages/ReportsPage.tsx';
 import BillingPage from '../pages/BillingPage.tsx';
 import { ReportViewer } from '../reports/ReportViewer.tsx';
 import FeedbackPage from '../pages/FeedbackPage.tsx';
+import PtmPage from '../pages/PtmPage.tsx';
 
 interface DashboardProps {
   session: Session;
@@ -40,6 +41,8 @@ const ParentDashboard: React.FC<DashboardProps> = ({ session, profile }) => {
         return <ReportsPage session={session} profile={profile} onReportSelect={setSelectedReport} />;
       case 'Billing':
         return <BillingPage session={session} />;
+      case 'PTM Scheduler':
+        return <PtmPage profile={profile} />;
       case 'Profile':
         return <ProfilePage session={session} profile={profile} />;
       case 'Feedback':

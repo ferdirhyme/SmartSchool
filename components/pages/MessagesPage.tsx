@@ -14,7 +14,8 @@ import {
     Check,
     CheckCheck,
     Users,
-    ArrowRight
+    ArrowRight,
+    Trash2
 } from 'lucide-react';
 
 interface MessagesPageProps {
@@ -332,6 +333,46 @@ const MessagesPage: React.FC<MessagesPageProps> = ({ session, profile, initialCo
         setIsSending(false);
     };
 
+    const handleDeleteConversation = async (convoId: string) => {
+        if (!window.confirm('Are you sure you want to delete this entire chat? This action cannot be undone.')) return;
+        
+        try {
+            const { error: deleteError } = await supabase
+                .from('conversations')
+                .delete()
+                .eq('id', convoId);
+
+            if (deleteError) throw deleteError;
+
+            setConversations(prev => prev.filter(c => c.id !== convoId));
+            if (selectedConversation?.id === convoId) {
+                setSelectedConversation(null);
+                setMessages([]);
+            }
+        } catch (err: any) {
+            console.error("Error deleting conversation:", err);
+            setError(err.message || "Failed to delete conversation.");
+        }
+    };
+
+    const handleDeleteMessage = async (msgId: string) => {
+        if (!window.confirm('Delete this message?')) return;
+        
+        try {
+            const { error: deleteError } = await supabase
+                .from('messages')
+                .delete()
+                .eq('id', msgId);
+
+            if (deleteError) throw deleteError;
+
+            setMessages(prev => prev.filter(m => m.id !== msgId));
+        } catch (err: any) {
+            console.error("Error deleting message:", err);
+            setError(err.message || "Failed to delete message.");
+        }
+    };
+
     const getInitials = (name: string) => {
         return name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
     };
@@ -520,6 +561,13 @@ const MessagesPage: React.FC<MessagesPageProps> = ({ session, profile, initialCo
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
+                                <button 
+                                    onClick={() => handleDeleteConversation(selectedConversation.id)}
+                                    className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all"
+                                    title="Delete Conversation"
+                                >
+                                    <Trash2 className="w-5 h-5" />
+                                </button>
                                 <button className="p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-all">
                                     <MoreVertical className="w-5 h-5" />
                                 </button>
@@ -560,6 +608,15 @@ const MessagesPage: React.FC<MessagesPageProps> = ({ session, profile, initialCo
                                             )}
                                             <div className={`px-4 py-3 rounded-2xl shadow-sm relative ${isMe ? 'bg-brand-600 text-white rounded-br-none' : 'bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border dark:border-gray-700'}`}>
                                                 <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                                                {isMe && (
+                                                    <button 
+                                                        onClick={() => handleDeleteMessage(msg.id)}
+                                                        className="absolute -left-10 top-1/2 -translate-y-1/2 p-2 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                                                        title="Delete Message"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                )}
                                             </div>
                                             <div className={`flex items-center gap-1.5 px-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
                                                 <span className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-tighter">

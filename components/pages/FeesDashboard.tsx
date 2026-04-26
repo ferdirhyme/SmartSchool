@@ -1,6 +1,7 @@
 import React, { useState, useEffect, FormEvent } from 'react';
 import { supabase } from '../../lib/supabase.ts';
 import { FeeType, Student, FeePayment, Profile } from '../../types.ts';
+import ConfirmationDialog from '../ui/ConfirmationDialog.tsx';
 
 // --- FeeType Management Component ---
 const FeeTypeManager = ({ profile }: { profile: Profile }) => {
@@ -10,6 +11,11 @@ const FeeTypeManager = ({ profile }: { profile: Profile }) => {
     const [editingFeeType, setEditingFeeType] = useState<FeeType | null>(null);
     const [formData, setFormData] = useState<Partial<FeeType>>({ name: '', description: '', default_amount: 0 });
     const [error, setError] = useState<string | null>(null);
+    const [confirmation, setConfirmation] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    } | null>(null);
 
     useEffect(() => {
         const fetchFeeTypes = async () => {
@@ -65,12 +71,16 @@ const FeeTypeManager = ({ profile }: { profile: Profile }) => {
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (window.confirm('Are you sure? This may fail if payments are associated with this fee type.')) {
-            const { error: deleteError } = await supabase.from('fee_types').delete().eq('id', id);
-            if (deleteError) setError(deleteError.message);
-            else setFeeTypes(prev => prev.filter(ft => ft.id !== id));
-        }
+    const handleDelete = async (id: string, name: string) => {
+        setConfirmation({
+            title: `Delete Fee Type: ${name}?`,
+            message: "Are you sure? This action cannot be undone and will fail if there are already payments associated with this fee type.",
+            onConfirm: async () => {
+                const { error: deleteError } = await supabase.from('fee_types').delete().eq('id', id);
+                if (deleteError) setError(deleteError.message);
+                else setFeeTypes(prev => prev.filter(ft => ft.id !== id));
+            }
+        });
     };
     
     return (
@@ -121,7 +131,7 @@ const FeeTypeManager = ({ profile }: { profile: Profile }) => {
                                 <td className="px-6 py-4">{ft.default_amount != null ? `GHS ${ft.default_amount.toFixed(2)}` : 'N/A'}</td>
                                 <td className="px-6 py-4 space-x-2">
                                 <button onClick={() => { setEditingFeeType(ft); setIsFeeTypeModalOpen(true); }} className="font-medium text-blue-600 hover:underline">Edit</button>
-                                <button onClick={() => handleDelete(ft.id)} className="font-medium text-red-600 hover:underline">Delete</button>
+                                <button onClick={() => handleDelete(ft.id, ft.name)} className="font-medium text-red-600 hover:underline">Delete</button>
                                 </td>
                             </tr>
                             ))}
@@ -129,6 +139,14 @@ const FeeTypeManager = ({ profile }: { profile: Profile }) => {
                     </table>
                 )}
             </div>
+
+            <ConfirmationDialog 
+                isOpen={!!confirmation}
+                onClose={() => setConfirmation(null)}
+                onConfirm={confirmation?.onConfirm || (() => {})}
+                title={confirmation?.title || ''}
+                message={confirmation?.message || ''}
+            />
         </div>
     );
 }

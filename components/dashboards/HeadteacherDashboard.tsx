@@ -23,9 +23,15 @@ import TeacherAttendanceView from '../pages/TeacherAttendanceView.tsx';
 import HeadteacherDashboardHome from '../pages/HeadteacherDashboardHome.tsx';
 import { ReportViewer } from '../reports/ReportViewer.tsx';
 import TermRemarks from '../pages/TermRemarks.tsx';
+import LessonNotesPage from '../pages/LessonNotesPage.tsx';
+import SchemeOfLearningPage from '../pages/SchemeOfLearningPage.tsx';
+import ExpenseTrackerPage from '../pages/ExpenseTrackerPage.tsx';
+import PtmPage from '../pages/PtmPage.tsx';
+import ParentInfo from '../pages/ParentInfo.tsx';
 
 import FeedbackPage from '../pages/FeedbackPage.tsx';
 import ProfilePage from '../pages/ProfilePage.tsx';
+import AccountingPage from '../pages/AccountingPage.tsx';
 
 interface DashboardProps {
   session: Session;
@@ -62,22 +68,39 @@ const HeadteacherDashboard: React.FC<DashboardProps> = ({ session, profile }) =>
         return <ManageSubjects profile={profile} />;
       case 'Timetable':
         return <Timetable profile={profile} />;
+      case 'Lesson Notes':
+        return <LessonNotesPage profile={profile} />;
+      case 'Scheme of Learning':
+        return <SchemeOfLearningPage profile={profile} />;
       case 'Promotion':
         return <PromotionPage profile={profile} />;
       case 'Term Remarks':
         return <TermRemarks profile={profile} />;
       case 'Fees':
+      case 'Fees Management':
         return <FeesDashboard profile={profile} />;
+      case 'Finance':
+      case 'Expense Tracker':
+        return <AccountingPage profile={profile} initialTab="expenses" />;
+      case 'Scholarships':
+        return <AccountingPage profile={profile} initialTab="scholarships" />;
       case 'Billing':
         return <BillingPage session={session} />;
-      case 'Teachers':
+      case 'Administration':
       case 'Staff List':
+        return <TeacherInfo profile={profile} />;
+      case 'Communication':
+      case 'PTM Scheduler':
+        return <PtmPage profile={profile} />;
+      case 'Teachers':
         return <TeacherInfo profile={profile} />;
       case 'Add Teacher':
         // Pass profile to AddTeacher and any teacherProfile from redirection
         return <AddTeacher profile={profile} prefillProfile={typeof activePage === 'object' ? activePage.teacherProfile : undefined} />;
       case 'Staff Authorizations':
         return <StaffAuthorizations profile={profile} setActivePage={setActivePage} />;
+      case 'Guardian Management':
+        return <ParentInfo profile={profile} />;
       case 'Staff Attendance':
         return <TeacherAttendanceView />;
       case 'Manage Announcements':

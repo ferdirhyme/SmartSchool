@@ -131,7 +131,7 @@ const ClassAttendance: React.FC<ClassAttendanceProps> = ({ session, profile: use
       status,
       class_id: homeroomClass.id,
       attendance_date: attendanceDate,
-      marked_by: teacher.id!,
+      marked_by: userProfile.id,
       school_id: userProfile.school_id
     }));
 

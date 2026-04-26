@@ -3,7 +3,10 @@ import React, { useState, useEffect } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase.ts';
 import { Profile, TimetableEntry, StudentAssessment, StudentAttendance, Student } from '../../types.ts';
+import { useSettings } from '../../contexts/SettingsContext.tsx';
 import { ReportsIcon, MessagesIcon } from '../icons/NavIcons.tsx';
+import { PerformanceLineChart, AttendanceDonutChart } from '../DashboardCharts.tsx';
+import { Award, Zap, Target } from 'lucide-react';
 
 interface StudentDashboardHomeProps {
   session: Session;
@@ -30,10 +33,13 @@ const QuickAction: React.FC<{ title: string; icon: React.FC<{ className?: string
 );
 
 const StudentDashboardHome: React.FC<StudentDashboardHomeProps> = ({ session, profile, setActivePage }) => {
+    const { settings } = useSettings();
     const [student, setStudent] = useState<Student | null>(null);
     const [nextClass, setNextClass] = useState<TimetableEntry | null>(null);
     const [performance, setPerformance] = useState<(StudentAssessment & {subject: {name: string}})[]>([]);
     const [attendance, setAttendance] = useState({ present: 0, late: 0, absent: 0, total: 0 });
+    const [performanceTrend, setPerformanceTrend] = useState<any[]>([]);
+    const [attendanceBreakdown, setAttendanceBreakdown] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -78,12 +84,23 @@ const StudentDashboardHome: React.FC<StudentDashboardHomeProps> = ({ session, pr
                 if (assessmentError) throw assessmentError;
                 setPerformance(assessments as any[] || []);
                 
-                const thirtyDaysAgo = new Date(new Date().setDate(today.getDate() - 30)).toISOString().split('T')[0];
-                const { data: attendanceData, error: attendanceError } = await supabase
+                // Determine the date range for "Current Term"
+                let startDate = new Date(new Date().setDate(today.getDate() - 30)).toISOString().split('T')[0];
+                if (settings?.term_start_date) {
+                    startDate = settings.term_start_date;
+                }
+                
+                let query = supabase
                     .from('student_attendance')
                     .select('status')
                     .eq('student_id', studentData.id)
-                    .gte('attendance_date', thirtyDaysAgo);
+                    .gte('attendance_date', startDate);
+                
+                if (settings?.term_end_date) {
+                    query = query.lte('attendance_date', settings.term_end_date);
+                }
+
+                const { data: attendanceData, error: attendanceError } = await query;
 
                 if (attendanceError) throw attendanceError;
 
@@ -94,6 +111,38 @@ const StudentDashboardHome: React.FC<StudentDashboardHomeProps> = ({ session, pr
                     else if (rec.status === 'Absent') absent++;
                 });
                 setAttendance({ present, late, absent, total: (attendanceData || []).length });
+                
+                // Attendance Breakdown
+                setAttendanceBreakdown([
+                    { name: 'Present', value: present, color: '#10B981' },
+                    { name: 'Late', value: late, color: '#FBBF24' },
+                    { name: 'Absent', value: absent, color: '#EF4444' },
+                ]);
+
+                // Performance Trend
+                const { data: allAssessments } = await supabase
+                    .from('student_assessments')
+                    .select('*')
+                    .eq('student_id', studentData.id)
+                    .order('year', { ascending: true })
+                    .order('term', { ascending: true });
+                
+                if (allAssessments && allAssessments.length > 0) {
+                    const trend = allAssessments.reduce((acc: any, a) => {
+                        const key = `T${a.term} ${a.year}`;
+                        if (!acc[key]) acc[key] = { name: key, total: 0, count: 0 };
+                        acc[key].total += a.total_score || 0;
+                        acc[key].count++;
+                        return acc;
+                    }, {});
+
+                    setPerformanceTrend(Object.values(trend).map((t: any) => ({
+                        name: t.name,
+                        score: t.total / t.count
+                    })));
+                } else {
+                    setPerformanceTrend([]);
+                }
 
             } catch (error: any) {
                 console.error("Error fetching student dashboard data:", error);
@@ -124,6 +173,65 @@ const StudentDashboardHome: React.FC<StudentDashboardHomeProps> = ({ session, pr
         <div>
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome, {profile.full_name}!</h1>
             <p className="text-gray-600 dark:text-gray-300 mb-8">Here's what's happening.</p>
+
+            {/* Infographic Dashboard for Students */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div className="bg-gradient-to-br from-indigo-600 to-brand-700 p-6 rounded-2xl shadow-lg text-white">
+                    <div className="flex items-center gap-3 mb-4 text-white/80">
+                        <Award className="w-5 h-5" />
+                        <span className="text-xs font-bold uppercase tracking-wider">Overall Average</span>
+                    </div>
+                    <p className="text-2xl font-black mb-1">
+                        {performanceTrend.length > 0 
+                            ? `${performanceTrend[performanceTrend.length-1].score.toFixed(1)}%` 
+                            : 'N/A'}
+                    </p>
+                    <p className="text-sm text-white/70 mb-4 font-medium">Academic Performance Index</p>
+                    <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden">
+                        <div className="bg-white h-full" style={{width: `${performanceTrend.length > 0 ? performanceTrend[performanceTrend.length-1].score : 0}%`}}></div>
+                    </div>
+                </div>
+
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="p-3 bg-brand-50 dark:bg-brand-900/30 rounded-xl">
+                            <Zap className="w-6 h-6 text-brand-600 dark:text-brand-400" />
+                        </div>
+                    </div>
+                    <div>
+                        <p className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Attendance Rate</p>
+                        <p className="text-2xl font-black text-gray-900 dark:text-white mt-1">
+                            {attendance.total > 0 ? `${((attendance.present / attendance.total) * 100).toFixed(0)}%` : 'N/A'}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Punctuality and attendance for {settings?.current_term || 'this period'}.</p>
+                    </div>
+                </div>
+
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col justify-between">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="p-3 bg-green-50 dark:bg-green-900/30 rounded-xl">
+                            <Target className="w-6 h-6 text-green-600 dark:text-green-400" />
+                        </div>
+                    </div>
+                    <div>
+                        <p className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Subjects Mastery</p>
+                        <p className="text-2xl font-black text-gray-900 dark:text-white mt-1">
+                            {performance.length} / Active
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">Keep track of your latest assessments across all subjects.</p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Visual Analytics */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                    <PerformanceLineChart data={performanceTrend} title="My Academic Progress" />
+                </div>
+                <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                    <AttendanceDonutChart data={attendanceBreakdown} title="My Attendance Record" />
+                </div>
+            </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
@@ -171,7 +279,7 @@ const StudentDashboardHome: React.FC<StudentDashboardHomeProps> = ({ session, pr
                             <QuickAction title="Messages" icon={MessagesIcon} onClick={() => setActivePage('Messages')} />
                         </div>
                     </Widget>
-                    <Widget title="Attendance (Last 30 School Days)">
+                    <Widget title={`Attendance (${settings?.current_term || 'This Term'})`}>
                         {attendance.total > 0 ? (
                             <div className="space-y-3">
                                 <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-100 dark:border-green-800/50">

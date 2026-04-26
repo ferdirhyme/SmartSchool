@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase.ts';
-import { Profile, Student, StudentAssessment, FeePayment, FeeType } from '../../types.ts';
+import { Profile, StudentAttendance, Student, StudentAssessment } from '../../types.ts';
+import { useSettings } from '../../contexts/SettingsContext.tsx';
 import { AcademicsIcon, ReportsIcon, MessagesIcon } from '../icons/NavIcons.tsx';
 import { CashIcon, UserCheckIcon } from '../icons/WidgetIcons.tsx';
+import { PerformanceLineChart, AttendanceDonutChart } from '../DashboardCharts.tsx';
+import { TrendingUp, Target, Award } from 'lucide-react';
 
 interface ParentDashboardHomeProps {
   profile: Profile;
@@ -40,9 +43,14 @@ const QuickAction: React.FC<{ title: string; icon: React.FC<{ className?: string
 );
 
 const ParentDashboardHome: React.FC<ParentDashboardHomeProps> = ({ profile, setActivePage }) => {
+    const { settings } = useSettings();
     const [children, setChildren] = useState<(Student & { class: { name: string } | null })[]>([]);
     const [selectedChildId, setSelectedChildId] = useState<string>('');
     const [childData, setChildData] = useState<ChildData | null>(null);
+    const [performanceTrend, setPerformanceTrend] = useState<any[]>([]);
+    const [attendanceBreakdown, setAttendanceBreakdown] = useState<any[]>([]);
+    const [classRank, setClassRank] = useState<{ rank: number, total: number } | null>(null);
+    const [gradeGrowth, setGradeGrowth] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
@@ -85,9 +93,23 @@ const ParentDashboardHome: React.FC<ParentDashboardHomeProps> = ({ profile, setA
                 // Fetch assessments
                 const { data: assessments } = await supabase.from('student_assessments').select('*, subject:subjects(name)').eq('student_id', selectedChildId).order('year', { ascending: false }).order('term', { ascending: false }).limit(5);
                 
-                // Fetch attendance for the last 30 days
-                const thirtyDaysAgo = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0];
-                const { data: attendanceData } = await supabase.from('student_attendance').select('status').eq('student_id', selectedChildId).gte('attendance_date', thirtyDaysAgo);
+                // Fetch attendance
+                let startDate = new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0];
+                if (settings?.term_start_date) {
+                    startDate = settings.term_start_date;
+                }
+                
+                let attendanceQuery = supabase
+                    .from('student_attendance')
+                    .select('status')
+                    .eq('student_id', selectedChildId)
+                    .gte('attendance_date', startDate);
+                
+                if (settings?.term_end_date) {
+                    attendanceQuery = attendanceQuery.lte('attendance_date', settings.term_end_date);
+                }
+
+                const { data: attendanceData } = await attendanceQuery;
 
                 let present = 0, late = 0, absent = 0;
                 (attendanceData || []).forEach(rec => {
@@ -108,6 +130,67 @@ const ParentDashboardHome: React.FC<ParentDashboardHomeProps> = ({ profile, setA
                     fees: { outstanding: Math.max(0, totalBilled - totalPaid), totalBilled }
                 });
 
+                // Performance Trend for Line Chart
+                const { data: allAssessments } = await supabase
+                    .from('student_assessments')
+                    .select('*')
+                    .eq('student_id', selectedChildId)
+                    .order('year', { ascending: true })
+                    .order('term', { ascending: true });
+
+                const trend = (allAssessments || []).reduce((acc: any, a) => {
+                    const key = `T${a.term} ${a.year}`;
+                    if (!acc[key]) acc[key] = { name: key, total: 0, count: 0 };
+                    acc[key].total += a.total_score || 0;
+                    acc[key].count++;
+                    return acc;
+                }, {});
+
+                const trendData = Object.values(trend).map((t: any) => ({
+                    name: t.name,
+                    score: t.total / t.count
+                }));
+                setPerformanceTrend(trendData);
+
+                // Class Rank Calculation (Heuristic: Average of recent assessments vs peers)
+                if (selectedChild.class_id) {
+                    const { data: classAssessments } = await supabase
+                        .from('student_assessments')
+                        .select('student_id, total_score')
+                        .eq('class_id', selectedChild.class_id);
+                    
+                    if (classAssessments && classAssessments.length > 0) {
+                        const studentTotals: any = {};
+                        classAssessments.forEach(a => {
+                            if (!studentTotals[a.student_id]) studentTotals[a.student_id] = { total: 0, count: 0 };
+                            studentTotals[a.student_id].total += a.total_score || 0;
+                            studentTotals[a.student_id].count++;
+                        });
+
+                        const sortedStudents = Object.keys(studentTotals).map(sid => ({
+                            id: sid,
+                            avg: studentTotals[sid].total / studentTotals[sid].count
+                        })).sort((a, b) => b.avg - a.avg);
+
+                        const myRank = sortedStudents.findIndex(s => s.id === selectedChildId) + 1;
+                        setClassRank({ rank: myRank, total: sortedStudents.length });
+                    }
+                }
+
+                // Grade Growth
+                if (trendData.length >= 2) {
+                    const latest = trendData[trendData.length - 1].score;
+                    const secondLatest = trendData[trendData.length - 2].score;
+                    setGradeGrowth(secondLatest > 0 ? ((latest - secondLatest) / secondLatest) * 100 : 0);
+                }
+
+                // Attendance Breakdown
+                setAttendanceBreakdown([
+                    { name: 'Present', value: present, color: '#10B981' },
+                    { name: 'Late', value: late, color: '#FBBF24' },
+                    { name: 'Absent', value: absent, color: '#EF4444' },
+                ]);
+
             } catch (error) {
                 console.error("Error fetching child data:", error);
             } finally {
@@ -119,7 +202,7 @@ const ParentDashboardHome: React.FC<ParentDashboardHomeProps> = ({ profile, setA
     }, [selectedChildId, children]);
 
     if (children.length === 0 && !isLoading) {
-        return <p>No children linked to this account. Please ensure your ward's admission number is correct in your profile.</p>;
+        return <p className="p-12 text-center text-gray-500 italic">No children linked to this account. Please ensure your ward's admission number is correct in your profile settings.</p>;
     }
 
     return (
@@ -136,78 +219,125 @@ const ParentDashboardHome: React.FC<ParentDashboardHomeProps> = ({ profile, setA
                 )}
             </div>
             
-            {isLoading ? <p>Loading dashboard for {children.find(c=>c.id === selectedChildId)?.full_name}...</p> : childData && (
-                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <div className="lg:col-span-2 space-y-6">
-                         <Widget icon={ReportsIcon} title="Quick Links">
-                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                                <QuickAction title="View Ward's Reports" icon={ReportsIcon} onClick={() => setActivePage('Reports')} />
-                                <QuickAction title="Top Up Balance" icon={CashIcon} onClick={() => setActivePage('Billing')} />
-                                <QuickAction title="Messages" icon={MessagesIcon} onClick={() => setActivePage('Messages')} />
+            {isLoading ? <p className="p-8 text-center text-gray-500 font-medium">Updating dashboard analytics...</p> : childData && (
+                 <div className="space-y-6">
+                    {/* Infographic Stats */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5">
+                            <div className="p-3 bg-brand-50 dark:bg-brand-900/30 rounded-xl">
+                                <Award className="w-6 h-6 text-brand-600 dark:text-brand-400" />
                             </div>
-                        </Widget>
-                        <Widget icon={AcademicsIcon} title="Performance Snapshot">
-                            {childData.assessments.length > 0 ? (
-                                <ul className="space-y-4">
-                                    {childData.assessments.map(p => (
-                                        <li key={p.id} className="flex justify-between items-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700 transition-all hover:shadow-sm">
-                                            <div>
-                                                <span className="font-bold text-gray-900 dark:text-white">{p.subject.name}</span>
-                                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 ml-2 bg-gray-200 dark:bg-gray-600 px-2 py-0.5 rounded-full">{p.term}</span>
-                                            </div>
-                                            <span className={`font-black text-lg ${p.total_score && p.total_score >= 50 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{p.total_score}/100</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            ) : (
-                                <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
-                                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No recent assessment scores available.</p>
-                                </div>
-                            )}
-                        </Widget>
+                            <div>
+                                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Class Rank</p>
+                                <p className="text-2xl font-black text-gray-900 dark:text-white">
+                                    {classRank ? `${classRank.rank}${['st','nd','rd','th'][Math.min(((classRank.rank%10)-1), 3)] || 'th'} / ${classRank.total}` : 'N/A'}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5">
+                            <div className="p-3 bg-indigo-50 dark:bg-indigo-900/30 rounded-xl">
+                                <TrendingUp className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+                            </div>
+                            <div>
+                                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Grade Growth</p>
+                                <p className="text-2xl font-black text-gray-900 dark:text-white">
+                                    {gradeGrowth !== null ? `${gradeGrowth > 0 ? '+' : ''}${gradeGrowth.toFixed(1)}%` : 'N/A'}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 flex items-center gap-5">
+                            <div className="p-3 bg-green-50 dark:bg-green-900/30 rounded-xl">
+                                <Target className="w-6 h-6 text-green-600 dark:text-green-400" />
+                            </div>
+                            <div>
+                                <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">Attendance</p>
+                                <p className="text-2xl font-black text-gray-900 dark:text-white">{((childData.attendance.present / (childData.attendance.total || 1)) * 100).toFixed(0)}%</p>
+                            </div>
+                        </div>
                     </div>
 
-                     <div className="space-y-6">
-                        <Widget icon={CashIcon} title="Fee & Billing Status">
-                            <div className="p-5 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700 mb-4">
-                                <p className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Outstanding Balance</p>
-                                <p className={`text-4xl font-black ${childData.fees.outstanding > 0 ? 'text-red-500 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
-                                    GHS {childData.fees.outstanding.toFixed(2)}
-                                </p>
-                            </div>
-                             <div className="p-5 bg-brand-50 dark:bg-brand-900/20 rounded-xl border border-brand-100 dark:border-brand-800/50">
-                                <p className="text-sm font-bold text-brand-700 dark:text-brand-300 uppercase tracking-wider mb-1">Credit Balance</p>
-                                <p className="text-3xl font-black text-brand-900 dark:text-brand-100">
-                                    GHS {profile.credit_balance.toFixed(2)}
-                                </p>
-                            </div>
-                            <button onClick={() => setActivePage('Billing')} className="mt-5 w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-sm text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 transition-all active:scale-[0.98]">Pay Fees / Top Up Credit</button>
-                        </Widget>
+                    {/* Charts Section */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                            <PerformanceLineChart data={performanceTrend} title="Academic Growth Trend" />
+                        </div>
+                        <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
+                            <AttendanceDonutChart data={attendanceBreakdown} title="Recent Attendance Breakdown" />
+                        </div>
+                    </div>
 
-                        <Widget icon={UserCheckIcon} title="Attendance (Last 30 Days)">
-                             {childData.attendance.total > 0 ? (
-                                <div className="space-y-3">
-                                    <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-100 dark:border-green-800/50">
-                                        <span className="text-sm font-bold text-green-700 dark:text-green-400">Present</span>
-                                        <span className="font-black text-green-700 dark:text-green-400">{childData.attendance.present}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800/50">
-                                        <span className="text-sm font-bold text-amber-700 dark:text-amber-400">Late</span>
-                                        <span className="font-black text-amber-700 dark:text-amber-400">{childData.attendance.late}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center p-3 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 dark:border-red-800/50">
-                                        <span className="text-sm font-bold text-red-700 dark:text-red-400">Absent</span>
-                                        <span className="font-black text-red-700 dark:text-red-400">{childData.attendance.absent}</span>
-                                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div className="lg:col-span-2 space-y-6">
+                            <Widget icon={ReportsIcon} title="Quick Links">
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                                    <QuickAction title="View Ward's Reports" icon={ReportsIcon} onClick={() => setActivePage('Reports')} />
+                                    <QuickAction title="Top Up Balance" icon={CashIcon} onClick={() => setActivePage('Billing')} />
+                                    <QuickAction title="Messages" icon={MessagesIcon} onClick={() => setActivePage('Messages')} />
                                 </div>
-                            ) : (
-                                <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
-                                    <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No attendance data available.</p>
+                            </Widget>
+                            <Widget icon={AcademicsIcon} title="Performance Snapshot">
+                                {childData.assessments.length > 0 ? (
+                                    <ul className="space-y-4">
+                                        {childData.assessments.map(p => (
+                                            <li key={p.id} className="flex justify-between items-center p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700 transition-all hover:shadow-sm">
+                                                <div>
+                                                    <span className="font-bold text-gray-900 dark:text-white">{p.subject.name}</span>
+                                                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400 ml-2 bg-gray-200 dark:bg-gray-600 px-2 py-0.5 rounded-full">{p.term}</span>
+                                                </div>
+                                                <span className={`font-black text-lg ${p.total_score && p.total_score >= 50 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>{p.total_score}/100</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                ) : (
+                                    <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                        <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No recent assessment scores available.</p>
+                                    </div>
+                                )}
+                            </Widget>
+                        </div>
+
+                         <div className="space-y-6">
+                            <Widget icon={CashIcon} title="Fee & Billing Status">
+                                <div className="p-5 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700 mb-4">
+                                    <p className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Outstanding Balance</p>
+                                    <p className={`text-4xl font-black ${childData.fees.outstanding > 0 ? 'text-red-500 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
+                                        GHS {childData.fees.outstanding.toFixed(2)}
+                                    </p>
                                 </div>
-                            )}
-                        </Widget>
-                     </div>
-                 </div>
+                                <div className="p-5 bg-brand-50 dark:bg-brand-900/20 rounded-xl border border-brand-100 dark:border-brand-800/50">
+                                    <p className="text-sm font-bold text-brand-700 dark:text-brand-300 uppercase tracking-wider mb-1">Credit Balance</p>
+                                    <p className="text-3xl font-black text-brand-900 dark:text-brand-100">
+                                        GHS {profile.credit_balance.toFixed(2)}
+                                    </p>
+                                </div>
+                                <button onClick={() => setActivePage('Billing')} className="mt-5 w-full flex items-center justify-center py-3 px-4 rounded-xl shadow-sm text-sm font-bold text-white bg-brand-600 hover:bg-brand-700 transition-all active:scale-[0.98]">Pay Fees / Top Up Credit</button>
+                            </Widget>
+
+                            <Widget icon={UserCheckIcon} title={`Attendance (${settings?.current_term || 'This Term'})`}>
+                                 {childData.attendance.total > 0 ? (
+                                    <div className="space-y-3">
+                                        <div className="flex justify-between items-center p-3 bg-green-50 dark:bg-green-900/20 rounded-xl border border-green-100 dark:border-green-800/50">
+                                            <span className="text-sm font-bold text-green-700 dark:text-green-400">Present</span>
+                                            <span className="font-black text-green-700 dark:text-green-400">{childData.attendance.present}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-100 dark:border-amber-800/50">
+                                            <span className="text-sm font-bold text-amber-700 dark:text-amber-400">Late</span>
+                                            <span className="font-black text-amber-700 dark:text-amber-400">{childData.attendance.late}</span>
+                                        </div>
+                                        <div className="flex justify-between items-center p-3 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 dark:border-red-800/50">
+                                            <span className="text-sm font-bold text-red-700 dark:text-red-400">Absent</span>
+                                            <span className="font-black text-red-700 dark:text-red-400">{childData.attendance.absent}</span>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center justify-center h-32 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-700">
+                                        <p className="text-sm font-medium text-gray-500 dark:text-gray-400">No attendance data available.</p>
+                                    </div>
+                                )}
+                            </Widget>
+                         </div>
+                    </div>
+                </div>
             )}
         </div>
     );

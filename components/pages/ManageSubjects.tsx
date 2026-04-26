@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase.ts';
 import { Subject, Profile, TeacherProfile } from '../../types.ts';
 import { Users, UserPlus, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import ConfirmationDialog from '../ui/ConfirmationDialog.tsx';
 
 const predefinedSubjects = [
   "Literacy / Language & Literacy",
@@ -35,6 +36,11 @@ const ManageSubjects: React.FC<ManageSubjectsProps> = ({ profile }) => {
     const [isLoading, setIsLoading] = useState(true);
     const [isAssigning, setIsAssigning] = useState<string | null>(null); // subjectId
     const [error, setError] = useState<string | null>(null);
+    const [confirmation, setConfirmation] = useState<{
+        title: string;
+        message: string;
+        onConfirm: () => void;
+    } | null>(null);
 
     const fetchData = async () => {
         setIsLoading(true);
@@ -120,17 +126,23 @@ const ManageSubjects: React.FC<ManageSubjectsProps> = ({ profile }) => {
         }
     };
 
-    const handleDeleteSubject = async (id: string) => {
-        const { error } = await supabase
-            .from('subjects')
-            .delete()
-            .eq('id', id);
-        
-        if (error) {
-            setError(error.message);
-        } else {
-            setSubjects(prev => prev.filter(s => s.id !== id));
-        }
+    const handleDeleteSubject = async (id: string, name: string) => {
+        setConfirmation({
+            title: `Delete Subject: ${name}?`,
+            message: "This will remove the subject from your school's curriculum. It will NOT delete records already created using this subject, but it will be removed from future selection.",
+            onConfirm: async () => {
+                const { error } = await supabase
+                    .from('subjects')
+                    .delete()
+                    .eq('id', id);
+                
+                if (error) {
+                    setError(error.message);
+                } else {
+                    setSubjects(prev => prev.filter(s => s.id !== id));
+                }
+            }
+        });
     }
 
     return (
@@ -173,7 +185,7 @@ const ManageSubjects: React.FC<ManageSubjectsProps> = ({ profile }) => {
                                     <div className="flex items-center justify-between">
                                         <h3 className="font-bold text-gray-900 dark:text-white">{subject.name}</h3>
                                         <button
-                                            onClick={() => handleDeleteSubject(subject.id)}
+                                            onClick={() => handleDeleteSubject(subject.id, subject.name)}
                                             className="p-1.5 rounded-full text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/50 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                                             aria-label={`Delete ${subject.name}`}
                                         >
@@ -245,6 +257,14 @@ const ManageSubjects: React.FC<ManageSubjectsProps> = ({ profile }) => {
                     <p className="text-gray-500 dark:text-gray-400">No subjects have been added yet.</p>
                 )}
             </div>
+
+            <ConfirmationDialog 
+                isOpen={!!confirmation}
+                onClose={() => setConfirmation(null)}
+                onConfirm={confirmation?.onConfirm || (() => {})}
+                title={confirmation?.title || ''}
+                message={confirmation?.message || ''}
+            />
         </div>
     );
 }

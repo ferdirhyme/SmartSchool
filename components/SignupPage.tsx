@@ -2,7 +2,7 @@
 import React, { useState, FormEvent, useCallback } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { UserRole } from '../types.ts';
-import { HeadteacherIcon, TeacherIcon } from './icons/UserIcons.tsx';
+import { HeadteacherIcon, TeacherIcon, ParentIcon, StudentIcon } from './icons/UserIcons.tsx';
 import { supabase } from '../lib/supabase.ts';
 import { useSettings } from '../contexts/SettingsContext.tsx';
 
@@ -15,6 +15,7 @@ const SignupPage: React.FC<SignupPageProps> = ({ onNavigateToLogin }) => {
   const [activeRole, setActiveRole] = useState<UserRole>(UserRole.Teacher);
   const [fullName, setFullName] = useState('');
   const [staffId, setStaffId] = useState('');
+  const [admissionNumbers, setAdmissionNumbers] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -36,11 +37,21 @@ const SignupPage: React.FC<SignupPageProps> = ({ onNavigateToLogin }) => {
     setIsLoading(true);
 
     try {
+      const admissionNumbersArray = admissionNumbers
+        .split(',')
+        .map(num => num.trim())
+        .filter(num => num.length > 0);
+
       const { error: authError } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          data: { full_name: fullName, role: activeRole, staff_id: staffId }
+          data: { 
+            full_name: fullName, 
+            role: activeRole, 
+            staff_id: staffId,
+            admission_numbers: admissionNumbersArray
+          }
         }
       });
 
@@ -52,7 +63,7 @@ const SignupPage: React.FC<SignupPageProps> = ({ onNavigateToLogin }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [activeRole, fullName, staffId, email, password, confirmPassword]);
+  }, [activeRole, fullName, staffId, admissionNumbers, email, password, confirmPassword]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center p-4 relative overflow-hidden">
@@ -73,7 +84,7 @@ const SignupPage: React.FC<SignupPageProps> = ({ onNavigateToLogin }) => {
         </div>
 
         <form onSubmit={handleSignup} className="space-y-5">
-          <div className="grid grid-cols-2 gap-3 mb-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
             <button
               type="button"
               onClick={() => setActiveRole(UserRole.Headteacher)}
@@ -90,12 +101,30 @@ const SignupPage: React.FC<SignupPageProps> = ({ onNavigateToLogin }) => {
               <TeacherIcon className={`w-6 h-6 mb-2 ${activeRole === UserRole.Teacher ? 'text-brand-600 dark:text-brand-400' : 'text-gray-400 dark:text-gray-500'}`} />
               <span className="text-sm font-semibold">Teacher</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveRole(UserRole.Parent)}
+              className={`p-4 border-2 rounded-xl flex flex-col items-center transition-all duration-200 ${activeRole === UserRole.Parent ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-300 shadow-sm' : 'border-gray-200 dark:border-gray-700 hover:border-brand-300 dark:hover:border-brand-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-600 dark:text-gray-400'}`}
+            >
+              <ParentIcon className={`w-6 h-6 mb-2 ${activeRole === UserRole.Parent ? 'text-brand-600 dark:text-brand-400' : 'text-gray-400 dark:text-gray-500'}`} />
+              <span className="text-sm font-semibold">Guardian</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveRole(UserRole.Student)}
+              className={`p-4 border-2 rounded-xl flex flex-col items-center transition-all duration-200 ${activeRole === UserRole.Student ? 'border-brand-500 bg-brand-50 dark:bg-brand-900/20 text-brand-700 dark:text-brand-300 shadow-sm' : 'border-gray-200 dark:border-gray-700 hover:border-brand-300 dark:hover:border-brand-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 text-gray-600 dark:text-gray-400'}`}
+            >
+              <StudentIcon className={`w-6 h-6 mb-2 ${activeRole === UserRole.Student ? 'text-brand-600 dark:text-brand-400' : 'text-gray-400 dark:text-gray-500'}`} />
+              <span className="text-sm font-semibold">Student</span>
+            </button>
           </div>
 
           <div className="p-3.5 bg-blue-50 dark:bg-blue-900/20 rounded-xl border border-blue-100 dark:border-blue-800/50 mb-2">
             <p className="text-xs text-blue-800 dark:text-blue-300 leading-relaxed font-medium">
               {activeRole === UserRole.Headteacher && "As a Headteacher, you will manage school operations. Your account must be linked to a school by a Superadmin."}
               {activeRole === UserRole.Teacher && "As a Teacher, you will manage classes and assessments. Your account must be linked to a school by a Superadmin."}
+              {activeRole === UserRole.Parent && "As a Guardian, you can track your ward's progress. You can be linked by a Headteacher later."}
+              {activeRole === UserRole.Student && "As a Student, access your term reports, timetable, quizzes, and resources."}
             </p>
           </div>
 
@@ -105,8 +134,27 @@ const SignupPage: React.FC<SignupPageProps> = ({ onNavigateToLogin }) => {
           </div>
 
           <div>
-            <label className="block text-sm font-semibold mb-1.5 text-gray-700 dark:text-gray-300">Staff ID</label>
-            <input required value={staffId} onChange={e => setStaffId(e.target.value)} className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:text-white transition-shadow" placeholder="STAFF-12345" />
+            <label className="block text-sm font-semibold mb-1.5 text-gray-700 dark:text-gray-300">
+              {activeRole === UserRole.Student || activeRole === UserRole.Parent ? 'Admission Number' : 'Staff ID'}
+            </label>
+            {activeRole === UserRole.Student || activeRole === UserRole.Parent ? (
+              <input 
+                required 
+                value={admissionNumbers} 
+                onChange={e => setAdmissionNumbers(e.target.value)} 
+                className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:text-white transition-shadow" 
+                placeholder={activeRole === UserRole.Parent ? "ADM-123, ADM-456 (comma separated)" : "ADM-12345"} 
+                title={activeRole === UserRole.Parent ? "Enter admission numbers separated by commas for multiple wards" : "Enter your admission number"}
+              />
+            ) : (
+              <input 
+                required 
+                value={staffId} 
+                onChange={e => setStaffId(e.target.value)} 
+                className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm focus:ring-2 focus:ring-brand-500 focus:border-brand-500 dark:bg-gray-700 dark:text-white transition-shadow" 
+                placeholder="STAFF-12345" 
+              />
+            )}
           </div>
 
           <div>

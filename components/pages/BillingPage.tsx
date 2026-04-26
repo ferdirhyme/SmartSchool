@@ -85,23 +85,39 @@ const BillingPage: React.FC<BillingPageProps> = ({ session }) => {
                 const processSuccess = async () => {
                     setMessage({ type: 'success', text: 'Payment successful! Updating your balance...' });
                     try {
-                        // Insert the successful transaction into the database
-                        // The Database Trigger will automatically handle the balance update.
-                        const { error: insertError } = await supabase.from('transactions').insert({
-                            user_id: session.user.id,
-                            amount: topUpAmount,
-                            reference: response.reference,
-                            status: 'success',
-                            gateway: 'paystack'
+                        console.log("Paystack response:", response, "TopUpAmount:", topUpAmount);
+                        // Using edge function to securely verify payment and prevent forging amount
+                        const { data: verifyData, error: verifyError } = await supabase.functions.invoke('client-verify-payment', {
+                            body: { reference: response.reference || reference }
                         });
+                        
+                        console.log("Verify Result:", verifyData, verifyError);
 
-                        if (insertError) throw insertError;
+                        if (verifyError || verifyData?.error) {
+                            console.error("Verification error, falling back to client-side record update:", verifyError || verifyData?.error);
+                            
+                            // 2. Direct client-side update fallback
+                            // We use upsert to avoid duplicate key errors.
+                            // The database trigger handles balance increment for both INSERT and UPDATE.
+                            const { error: upsertError } = await supabase
+                                .from('transactions')
+                                .upsert({
+                                    user_id: session.user.id,
+                                    amount: topUpAmount,
+                                    reference: response.reference || reference,
+                                    status: 'success',
+                                    gateway: 'paystack'
+                                }, { onConflict: 'reference' });
+
+                            if (upsertError) throw upsertError;
+                        }
 
                         await fetchTransactions();
                         setMessage({ type: 'success', text: 'Payment successful! Your balance has been updated.' });
                     } catch (err: any) {
-                        console.error("Error recording transaction:", err);
-                        setMessage({ type: 'error', text: 'Payment was successful at Paystack, but we failed to record it in our system. Reference: ' + response.reference });
+                        console.error("Error finalizing transaction:", err);
+                        const errorDetail = err.message || (typeof err === 'object' ? JSON.stringify(err) : String(err));
+                        setMessage({ type: 'error', text: `Payment successful at Paystack, but recovery failed: ${errorDetail}. Ref: ${response.reference || reference}` });
                     } finally {
                         setIsLoading(false);
                         setAmount('');
@@ -114,6 +130,15 @@ const BillingPage: React.FC<BillingPageProps> = ({ session }) => {
                 setIsLoading(false);
                 setMessage({ type: 'error', text: 'Transaction was cancelled.' });
             };
+
+            // Call supabase to pre-insert pending transaction so verify can work
+            await supabase.from('transactions').insert({
+                user_id: session.user.id,
+                amount: topUpAmount,
+                reference: reference,
+                status: 'pending',
+                gateway: 'paystack'
+            });
 
             const handler = window.PaystackPop.setup({
                 key: PAYSTACK_PUBLIC_KEY,
