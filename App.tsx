@@ -43,6 +43,67 @@ BEGIN
     );
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
+
+-- Fix transactions RLS
+ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users can view own transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Users can insert own transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Users can update own transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Admins can view all transactions" ON public.transactions;
+DROP POLICY IF EXISTS "Teachers select school data" ON public.transactions;
+DROP POLICY IF EXISTS "Teachers insert school data" ON public.transactions;
+DROP POLICY IF EXISTS "Teachers update school data" ON public.transactions;
+DROP POLICY IF EXISTS "Headteachers manage school data" ON public.transactions;
+DROP POLICY IF EXISTS "Teachers manage school data" ON public.transactions;
+
+CREATE POLICY "Transactions: Viewable" ON public.transactions
+    FOR SELECT USING (user_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Transactions: Insertable" ON public.transactions
+    FOR INSERT WITH CHECK (user_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Transactions: Updatable" ON public.transactions
+    FOR UPDATE USING (user_id = auth.uid() OR public.is_admin())
+    WITH CHECK (user_id = auth.uid() OR public.is_admin());
+CREATE POLICY "Transactions: Deletable" ON public.transactions
+    FOR DELETE USING (public.is_admin());
+GRANT ALL ON TABLE public.transactions TO authenticated, service_role;
+
+-- Add assessment type columns if missing
+ALTER TABLE public.student_assessments ADD COLUMN IF NOT EXISTS assessment_type TEXT DEFAULT 'Regular';
+ALTER TABLE public.student_assessments ADD COLUMN IF NOT EXISTS mock_tag TEXT DEFAULT 'N/A';
+UPDATE public.student_assessments SET assessment_type = 'Regular' WHERE assessment_type IS NULL;
+UPDATE public.student_assessments SET mock_tag = 'N/A' WHERE mock_tag IS NULL;
+
+-- Fix unique constraint for assessments
+DO $$ 
+BEGIN
+    ALTER TABLE public.student_assessments DROP CONSTRAINT IF EXISTS student_assessments_unique_entry;
+    ALTER TABLE public.student_assessments DROP CONSTRAINT IF EXISTS student_assessments_school_unique;
+    ALTER TABLE public.student_assessments DROP CONSTRAINT IF EXISTS student_assessments_composite_key;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'student_assessments_full_composite_key') THEN
+        ALTER TABLE public.student_assessments 
+        ADD CONSTRAINT student_assessments_full_composite_key 
+        UNIQUE (school_id, student_id, class_id, subject_id, term, year, assessment_type, mock_tag);
+    END IF;
+END $$;
+
+-- Credit Balance Trigger
+CREATE OR REPLACE FUNCTION public.handle_transaction_success()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.status = 'success' AND (OLD.status IS NULL OR OLD.status != 'success') THEN
+        UPDATE public.profiles
+        SET credit_balance = COALESCE(credit_balance, 0) + NEW.amount
+        WHERE id = NEW.user_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_transaction_success ON public.transactions;
+CREATE TRIGGER on_transaction_success
+    AFTER INSERT OR UPDATE ON public.transactions
+    FOR EACH ROW
+    EXECUTE FUNCTION public.handle_transaction_success();
 `;
                     await supabase.rpc('execute_admin_sql', { sql_script: fixScript });
                     console.log("Auto-fixed get_teacher_id_by_auth_email RPC.");

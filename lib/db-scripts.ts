@@ -10,7 +10,7 @@ DROP TABLE IF EXISTS public.student_assessments;
 CREATE TABLE public.student_assessments (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     created_at timestamp with time zone NOT NULL DEFAULT now(),
-    school_id uuid NOT NULL DEFAULT public.get_my_school_id() REFERENCES public.schools(id) ON DELETE CASCADE,
+    school_id uuid NOT NULL DEFAULT public.get_my_school_id(),
     student_id uuid NOT NULL,
     class_id uuid NOT NULL,
     subject_id uuid NOT NULL,
@@ -25,13 +25,15 @@ CREATE TABLE public.student_assessments (
     exam_score numeric,
     total_score numeric,
     remarks text,
+    assessment_type text DEFAULT 'Regular',
+    mock_tag text DEFAULT 'N/A',
     CONSTRAINT student_assessments_pkey PRIMARY KEY (id),
     CONSTRAINT student_assessments_school_id_fkey FOREIGN KEY (school_id) REFERENCES public.schools(id) ON DELETE CASCADE,
     CONSTRAINT student_assessments_class_id_fkey FOREIGN KEY (class_id) REFERENCES public.classes(id) ON DELETE CASCADE,
     CONSTRAINT student_assessments_student_id_fkey FOREIGN KEY (student_id) REFERENCES public.students(id) ON DELETE CASCADE,
     CONSTRAINT student_assessments_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.subjects(id) ON DELETE CASCADE,
     CONSTRAINT student_assessments_teacher_id_fkey FOREIGN KEY (teacher_id) REFERENCES public.teachers(id) ON DELETE SET NULL,
-    CONSTRAINT student_assessments_unique_entry UNIQUE (student_id, class_id, subject_id, term, year)
+    CONSTRAINT student_assessments_full_composite_key UNIQUE (school_id, student_id, class_id, subject_id, term, year, assessment_type, mock_tag)
 );
 
 -- Enable Row Level Security
@@ -538,7 +540,7 @@ BEGIN
             ');
         ELSE
             -- Default school-wide policy for teachers
-            IF t IN ('fee_payments', 'expenses', 'transactions', 'student_term_reports') THEN
+            IF t IN ('fee_payments', 'expenses', 'student_term_reports') THEN
                 -- Restricted: No DELETE for regular teachers on financial/official reports
                 EXECUTE format('
                     CREATE POLICY "Teachers select school data" ON public.%I
