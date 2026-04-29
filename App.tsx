@@ -34,13 +34,13 @@ const App: React.FC = () => {
                     const fixScript = `
 CREATE OR REPLACE FUNCTION public.get_teacher_id_by_auth_email()
 RETURNS uuid AS $$
-DECLARE
-    v_teacher_id uuid;
-    v_email text;
 BEGIN
-    v_email := (auth.jwt() ->> 'email');
-    SELECT id INTO v_teacher_id FROM public.teachers WHERE email = v_email LIMIT 1;
-    RETURN v_teacher_id;
+    RETURN (
+        SELECT id 
+        FROM public.teachers 
+        WHERE email = (auth.jwt() ->> 'email')
+        LIMIT 1
+    );
 END;
 $$ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public;
 `;

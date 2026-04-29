@@ -63,8 +63,20 @@ const StaffAuthorizations: React.FC<StaffAuthorizationsProps> = ({ profile, setA
         teacherProfile: { ...teacher, school_id: profile.school_id, is_onboarded: true } 
       });
       
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to authorize teacher");
+    } catch (err: any) {
+      console.error('Authorization failed:', err);
+      // Try to parse the standard JSON error if it exists
+      let errorMessage = 'Failed to authorize teacher. This is likely due to database permissions (RLS).';
+      try {
+        const parsed = JSON.parse(err.message);
+        if (parsed.error) {
+          errorMessage = `Auth Error: ${parsed.error}`;
+          if (parsed.code) errorMessage += ` (${parsed.code})`;
+        }
+      } catch (e) {
+        errorMessage = err.message || errorMessage;
+      }
+      alert(errorMessage);
     } finally {
       setIsActionLoading(false);
     }

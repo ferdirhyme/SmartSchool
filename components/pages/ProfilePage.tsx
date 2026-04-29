@@ -28,9 +28,12 @@ const ProfilePage: React.FC<ProfilePageProps> = ({ session, profile }) => {
         try {
             let fetchedProfile = null;
             if (profile.role === UserRole.Teacher || profile.role === UserRole.Headteacher) {
-                const { data: teacherId, error: rpcError } = await supabase
+                const { data: teacherIdData, error: rpcError } = await supabase
                     .rpc('get_teacher_id_by_auth_email');
                 
+                let teacherId = teacherIdData;
+                if (teacherId === 'null') teacherId = null;
+
                 if (rpcError || !teacherId) {
                     throw new Error("Could not find your teacher profile. This is likely a database permission issue. Please contact your administrator and ask them to run the required setup script from the Settings > Advanced page.");
                 }

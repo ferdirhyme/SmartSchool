@@ -62,4 +62,27 @@ export abstract class BaseService {
 
     return error.message || "An unexpected error occurred. Please try again later.";
   }
+
+  protected handleFirestoreError(error: any, operationType: 'create' | 'update' | 'delete' | 'list' | 'get' | 'write', path: string | null) {
+      // In Supabase, 42501 is "insufficient_privilege" (RLS violation)
+      // PGRST116 can also be caused by RLS returning 0 rows for a .single() request
+      
+      const errInfo = {
+          error: error instanceof Error ? error.message : (error.message || String(error)),
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          operationType,
+          path,
+          authInfo: {
+              // We'll try to get current user if possible, but supabase.auth is async
+              // For simplicity in the log, we mark what we can
+          }
+      };
+      
+      console.error('Firestore/Supabase Error: ', JSON.stringify(errInfo));
+      // No need to throw if we want the service to handle it, 
+      // but the instructions say MUST throw a new error with specific JSON
+      throw new Error(JSON.stringify(errInfo));
+  }
 }

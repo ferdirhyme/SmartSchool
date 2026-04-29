@@ -67,34 +67,42 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
                 
                 if (rpcError) {
                     console.warn('RPC get_teacher_id_by_auth_email failed, attempting direct query:', rpcError);
-                    const { data: { session } } = await supabase.auth.getSession();
-                    if (session?.user?.email) {
+                    const { data: { session: authSession } } = await supabase.auth.getSession();
+                    if (authSession?.user?.email) {
                         const { data: teacherRecord } = await supabase
                             .from('teachers')
                             .select('id')
-                            .eq('email', session.user.email)
-                            .single();
+                            .eq('email', authSession.user.email)
+                            .maybeSingle();
                         if (teacherRecord) {
                             currentTeacherId = teacherRecord.id;
                         }
                     }
-                    if (!currentTeacherId) {
-                         throw new Error(`Could not find your teacher profile. This is likely a database permission issue. Please contact your administrator and ask them to run the required setup script from the Settings > Advanced page. (Error details: ${rpcError.message})`);
+                    // If we still don't have it, but we have an RPC error, ONLY throw if we are sure it's a fatal DB error
+                    if (!currentTeacherId && !rpcError.message.includes('Could not find')) {
+                         // Check for the "null" UUID error specifically to provide a better message
+                         if (rpcError.message.includes('uuid') && rpcError.message.includes('null')) {
+                             // This is handled by the !currentTeacherId check below
+                         } else {
+                             throw rpcError;
+                         }
                     }
                 } else {
                     currentTeacherId = teacherIdData;
                 }
                 
+                // Safe check for null or "null" string
+                if (currentTeacherId === 'null') currentTeacherId = null;
                 setTeacherId(currentTeacherId);
                 
                 if (!currentTeacherId) {
-                    throw new Error("Could not find your teacher profile. Please contact an administrator to add you to the Staff List.");
+                    throw new Error(`Your user account (${session.user.email}) is not yet linked to a teacher profile in the system.`);
                 }
 
                 const { data: teacherData, error: teacherError } = await supabase
                     .from('teachers')
                     .select('*, teachable_classes:teacher_classes(is_homeroom, class:classes(*))')
-                    .eq('id', teacherId)
+                    .eq('id', currentTeacherId)
                     .single();
                 
                 if (teacherError) throw teacherError;
@@ -138,7 +146,7 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
                             .limit(3),
                         supabase.from('schemes_of_learning')
                             .select('*', { count: 'exact', head: true })
-                            .eq('teacher_id', teacherId)
+                            .eq('teacher_id', currentTeacherId)
                             .eq('status', 'rejected')
                     ]);
                     
@@ -150,7 +158,7 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
                 const { data: staffAttendanceData, error: staffAttendanceError } = await supabase
                     .from('teacher_attendance')
                     .select('*')
-                    .eq('teacher_id', teacherId)
+                    .eq('teacher_id', currentTeacherId)
                     .eq('attendance_date', todayStr)
                     .maybeSingle();
                 

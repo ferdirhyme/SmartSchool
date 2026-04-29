@@ -53,7 +53,9 @@ const TermRemarks: React.FC<TermRemarksProps> = ({ profile }) => {
                     availableClasses = classData || [];
                 } else {
                     // Teachers see classes they are assigned to in Staff List OR Timetable
-                    const { data: teacherId, error: rpcError } = await supabase.rpc('get_teacher_id_by_auth_email');
+                    const { data: teacherIdData, error: rpcError } = await supabase.rpc('get_teacher_id_by_auth_email');
+                    let teacherId = teacherIdData;
+                    if (teacherId === 'null') teacherId = null;
                     if (rpcError || !teacherId) throw new Error("Could not find your teacher profile.");
 
                     // 1. Get classes from Staff List assignments (teacher_classes)

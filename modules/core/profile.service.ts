@@ -31,8 +31,10 @@ export class ProfileService extends BaseService {
         .order('created_at', { ascending: false });
 
       if (schoolId) {
-        // Headteacher view: Teachers assigned to their school but not yet onboarded
-        query = query.eq('school_id', schoolId).eq('is_onboarded', false);
+        // Headteacher view: Teachers assigned to their school but not yet onboarded,
+        // OR teachers not yet assigned to any school (so they can be claimed).
+        // Using filter OR syntax for supabase-js
+        query = query.or(`and(school_id.eq.${schoolId},is_onboarded.eq.false),school_id.is.null`);
       } else {
         // Admin view: Teachers not yet assigned to any school
         query = query.is('school_id', null);
@@ -59,7 +61,10 @@ export class ProfileService extends BaseService {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        this.handleFirestoreError(error, 'update', `${this.table}/${profileId}`);
+        throw error;
+      }
       return { data, error: null };
     } catch (err: any) {
       return { data: null, error: this.handleError(err) };
@@ -78,7 +83,10 @@ export class ProfileService extends BaseService {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        this.handleFirestoreError(error, 'update', `${this.table}/${profileId}`);
+        throw error;
+      }
       return { data, error: null };
     } catch (err: any) {
       return { data: null, error: this.handleError(err) };

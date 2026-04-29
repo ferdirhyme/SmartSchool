@@ -34,8 +34,11 @@ const ClassAttendance: React.FC<ClassAttendanceProps> = ({ session, profile: use
     setMessage(null);
     try {
       // 1. Fetch teacher profile with teachable classes info
-      const { data: teacherId, error: rpcError } = await supabase
+      const { data: teacherIdData, error: rpcError } = await supabase
         .rpc('get_teacher_id_by_auth_email');
+
+      let teacherId = teacherIdData;
+      if (teacherId === 'null') teacherId = null;
 
       if (rpcError || !teacherId) {
           throw new Error("Could not find your teacher profile. This is likely a database permission issue. Please contact your administrator and ask them to run the required setup script from the Settings > Advanced page.");
