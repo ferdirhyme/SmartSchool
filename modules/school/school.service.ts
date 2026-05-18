@@ -142,6 +142,12 @@ export class SchoolService extends BaseService {
   async checkSubscription(): Promise<boolean> {
     return true;
   }
+
+  async fetchDatabaseSchema() {
+    const { data, error } = await supabase.rpc('get_production_schema');
+    if (error) throw error;
+    return data;
+  }
 }
 
 export const schoolService = new SchoolService();

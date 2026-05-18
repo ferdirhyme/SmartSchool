@@ -12,6 +12,7 @@ export interface LessonNote {
     term: string;
     strand: string;
     sub_strand?: string;
+    topic?: string;
     days?: string;
     duration?: string;
     reference?: string;
@@ -23,11 +24,16 @@ export interface LessonNote {
     presentation_steps: { step: string; activity: string }[];
     conclusion?: string;
     evaluation?: string;
+    key_words?: string[];
+    methodology?: string;
+    equipment?: string[];
+    extra_details?: any;
     status: 'pending' | 'approved' | 'rejected';
     headteacher_remarks?: string;
     approved_at?: string;
     created_at: string;
     teacher?: { full_name: string };
+    file_url?: string;
 }
 
 export class LessonNoteService extends BaseService {

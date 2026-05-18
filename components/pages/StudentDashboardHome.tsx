@@ -157,6 +157,9 @@ const StudentDashboardHome: React.FC<StudentDashboardHomeProps> = ({ session, pr
     const formatTime = (time: string) => {
         if (!time) return '--:--';
         try {
+            if (time.includes('T')) {
+                return new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric' });
+            }
             const date = new Date(`1970-01-01T${time.includes(':') ? time : '00:00'}${time.split(':').length === 2 ? ':00' : ''}Z`);
             if (isNaN(date.getTime())) return time;
             return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', timeZone: 'UTC' });

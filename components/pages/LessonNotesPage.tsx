@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
-import { Plus, FileText, CheckCircle, XCircle, Clock, Printer, Trash2, ChevronDown, ChevronUp, Search, Sparkles, Loader2 } from 'lucide-react';
+import { Plus, FileText, CheckCircle, XCircle, Clock, Printer, Trash2, ChevronDown, ChevronUp, Search, Sparkles, Loader2, Upload, ExternalLink } from 'lucide-react';
 import { lessonNoteService, LessonNote } from '../../modules/school/lesson-note.service.ts';
 import { teacherService, AssignedClass, AssignedSubject } from '../../modules/school/teacher.service.ts';
 import { schoolService } from '../../modules/school/school.service.ts';
 import { aiService } from '../../services/ai.service.ts';
+import { supabase } from '../../lib/supabase.ts';
 import { Profile, UserRole, SchoolSettings } from '../../types.ts';
-import { motion, AnimatePresence } from 'motion/react';
 import ConfirmationDialog from '../ui/ConfirmationDialog.tsx';
 
 interface LessonNotesPageProps {
@@ -42,10 +42,19 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
     const [days, setDays] = useState('');
     const [coreCompetencies, setCoreCompetencies] = useState<string[]>([]);
     const [tlms, setTlms] = useState<string[]>([]);
+    const [keyWords, setKeyWords] = useState<string[]>([]);
+    const [methodology, setMethodology] = useState('');
+    const [equipment, setEquipment] = useState<string[]>([]);
+    const [topic, setTopic] = useState("");
+    const [extraDetails, setExtraDetails] = useState<any>({});
+    const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+    const [fileUrl, setFileUrl] = useState<string | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
     const [isAiGenerating, setIsAiGenerating] = useState(false);
     const [isPrinting, setIsPrinting] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
     const [confirmation, setConfirmation] = useState<{
         title: string;
         message: string;
@@ -126,18 +135,27 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        
+        // Basic validation: Either learning indicators or a file must be provided
+        if (!learningIndicators && !fileUrl) {
+            setStatusMessage({ type: 'error', text: "Please either provide learning indicators or upload a prepared lesson note file." });
+            return;
+        }
+
         setIsActionLoading(true);
+        setStatusMessage(null);
         try {
             const noteData = {
-                week_ending: weekEnding,
-                subject,
-                class_name: className,
+                week_ending: weekEnding || new Date().toISOString().split('T')[0],
+                subject: subject || (fileUrl ? 'Uploaded Note File' : ''),
+                class_name: className || (fileUrl ? 'Uploaded Note File' : ''),
                 term,
-                strand,
+                strand: strand || (fileUrl ? 'Attached File' : ''),
                 sub_strand: subStrand,
+                topic: topic || (fileUrl ? 'See attached file' : ''),
                 reference,
                 rpk,
-                learning_indicators: learningIndicators,
+                learning_indicators: learningIndicators || (fileUrl ? 'See attached file' : ''),
                 introduction,
                 presentation_steps: presentationSteps,
                 conclusion,
@@ -145,7 +163,12 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                 days,
                 duration,
                 core_competencies: coreCompetencies,
-                tlms: tlms
+                tlms: tlms,
+                key_words: keyWords,
+                methodology: methodology,
+                equipment: equipment,
+                extra_details: extraDetails,
+                file_url: fileUrl
             };
 
             if (isEditing && editingNoteId) {
@@ -153,24 +176,30 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                 if (error) throw new Error(error);
                 if (data) {
                     setNotes(notes.map(n => n.id === editingNoteId ? { ...n, ...data } : n));
-                    setShowForm(false);
-                    resetForm();
-                    setIsEditing(false);
-                    setEditingNoteId(null);
-                    alert("Lesson note updated successfully!");
+                    setStatusMessage({ type: 'success', text: "Lesson note updated successfully!" });
+                    setTimeout(() => {
+                        setShowForm(false);
+                        resetForm();
+                        setIsEditing(false);
+                        setEditingNoteId(null);
+                        setStatusMessage(null);
+                    }, 1500);
                 }
             } else {
                 const { data, error } = await lessonNoteService.createNote(noteData);
                 if (error) throw new Error(error);
                 if (data) {
                     setNotes([data, ...notes]);
-                    setShowForm(false);
-                    resetForm();
-                    alert("Lesson note submitted for review!");
+                    setStatusMessage({ type: 'success', text: "Lesson note submitted for review!" });
+                    setTimeout(() => {
+                        setShowForm(false);
+                        resetForm();
+                        setStatusMessage(null);
+                    }, 1500);
                 }
             }
         } catch (err) {
-            alert(err instanceof Error ? err.message : "Failed to save lesson note");
+            setStatusMessage({ type: 'error', text: err instanceof Error ? err.message : "Failed to save lesson note" });
         } finally {
             setIsActionLoading(false);
         }
@@ -185,10 +214,11 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                 setNotes(notes.map(n => n.id === id ? { ...n, ...data } : n));
                 setSelectedNote(null);
                 setRemarks('');
-                alert(`Lesson note ${status} successfully!`);
+                setStatusMessage({ type: 'success', text: `Lesson note ${status} successfully!` });
+                setTimeout(() => setStatusMessage(null), 3000);
             }
         } catch (err) {
-            alert(err instanceof Error ? err.message : "Failed to update status");
+            setStatusMessage({ type: 'error', text: err instanceof Error ? err.message : "Failed to update status" });
         } finally {
             setIsActionLoading(false);
         }
@@ -205,15 +235,98 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                     if (error) throw new Error(error);
                     setNotes(prev => prev.filter(n => n.id !== id));
                     setSelectedNote(null);
-                    alert("Lesson note deleted.");
+                    setStatusMessage({ type: 'success', text: "Lesson note deleted." });
+                    setTimeout(() => setStatusMessage(null), 3000);
                 } catch (err) {
                     console.error("Delete failed:", err);
-                    alert(err instanceof Error ? err.message : "Failed to delete note");
+                    setStatusMessage({ type: 'error', text: err instanceof Error ? err.message : "Failed to delete note" });
                 } finally {
                     setIsActionLoading(false);
                 }
             }
         });
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        console.log("File selected:", file.name, file.type, file.size);
+        setStatusMessage(null);
+
+        // Validate file type
+        const allowedExtensions = ['.pdf', '.doc', '.docx'];
+        const fileName = file.name.toLowerCase();
+        const isAllowedExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
+        
+        const allowedMimeTypes = [
+            'application/pdf', 
+            'application/msword', 
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        ];
+        
+        if (!allowedMimeTypes.includes(file.type) && !isAllowedExtension) {
+            setStatusMessage({ type: 'error', text: "Only PDF and Word documents are allowed." });
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            return;
+        }
+
+        // Validate file size (max 10MB)
+        if (file.size > 10 * 1024 * 1024) {
+            setStatusMessage({ type: 'error', text: "File size must be less than 10MB." });
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            return;
+        }
+
+        setIsUploading(true);
+        try {
+            const fileExt = file.name.split('.').pop() || 'tmp';
+            const uniqueName = `${profile.id}/${Date.now()}.${fileExt}`;
+            const filePath = `lesson-notes/${uniqueName}`;
+
+            console.log("Uploading to Supabase path:", filePath);
+
+            // Try 'attachments' bucket first, then fallback to 'avatars' which we know usually exists
+            let uploadResult = await supabase.storage
+                .from('attachments')
+                .upload(filePath, file, {
+                    cacheControl: '3600',
+                    upsert: false
+                });
+
+            if (uploadResult.error) {
+                console.warn("Upload to 'attachments' bucket failed, trying 'avatars' bucket...", uploadResult.error);
+                uploadResult = await supabase.storage
+                    .from('avatars')
+                    .upload(filePath, file, {
+                        cacheControl: '3600',
+                        upsert: false
+                    });
+            }
+
+            if (uploadResult.error) {
+                console.error("Supabase upload error (both buckets):", uploadResult.error);
+                throw new Error("Storage bucket not configured or permission denied. Please contact support.");
+            }
+
+            const { data: { publicUrl } } = supabase.storage
+                .from(uploadResult.data.path.startsWith('lesson-notes') ? 'attachments' : 'avatars')
+                .getPublicUrl(uploadResult.data.path);
+
+            console.log("Public URL generated:", publicUrl);
+            setFileUrl(publicUrl);
+            setStatusMessage({ type: 'success', text: "File uploaded successfully!" });
+            
+            // Clear message after 3 seconds
+            setTimeout(() => setStatusMessage(null), 3000);
+        } catch (err) {
+            console.error("Upload process failed:", err);
+            setStatusMessage({ type: 'error', text: err instanceof Error ? err.message : "Failed to upload file. Please check your connection." });
+        } finally {
+            setIsUploading(false);
+            // Reset input so the same file can be selected again
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
     };
 
     const handleEdit = (note: LessonNote) => {
@@ -225,6 +338,7 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
         setTerm(note.term || 'Term 1');
         setStrand(note.strand || '');
         setSubStrand(note.sub_strand || '');
+        setTopic(note.topic || '');
         setReference(note.reference || '');
         setRpk(note.rpk || '');
         setLearningIndicators(note.learning_indicators || '');
@@ -235,14 +349,19 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
         setDuration(note.duration || '');
         setCoreCompetencies(note.core_competencies || []);
         setTlms(note.tlms || []);
+        setKeyWords(note.key_words || []);
+        setMethodology(note.methodology || '');
+        setEquipment(note.equipment || []);
+        setExtraDetails(note.extra_details || {});
         setPresentationSteps(note.presentation_steps || []);
+        setFileUrl(note.file_url || null);
         setShowForm(true);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const handleAiGenerate = async () => {
         if (!subject || !className || !strand) {
-            alert("Please select Subject, Class, and enter a Strand first.");
+            setStatusMessage({ type: 'error', text: "Please select Subject, Class, and enter a Strand first." });
             return;
         }
 
@@ -277,12 +396,14 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                 }
                 
                 if (result.keyWords) {
-                    setEvaluation(prev => prev + "\nKey Words: " + result.keyWords);
+                    setKeyWords(Array.isArray(result.keyWords) ? result.keyWords : result.keyWords.split(',').map((s: string) => s.trim()));
                 }
+                if (result.methodology) setMethodology(result.methodology);
+                if (result.equipment && Array.isArray(result.equipment)) setEquipment(result.equipment);
             }
         } catch (err) {
             console.error("AI Generation failed:", err);
-            alert("Failed to generate lesson plan with AI. Please try again.");
+            setStatusMessage({ type: 'error', text: "Failed to generate lesson plan with AI. Please try again." });
         } finally {
             setIsAiGenerating(false);
         }
@@ -295,6 +416,7 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
         setTerm('Term 1');
         setStrand('');
         setSubStrand('');
+        setTopic('');
         setReference('');
         setIndicatorCount(1);
         setRpk('');
@@ -306,7 +428,12 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
         setDuration('');
         setCoreCompetencies([]);
         setTlms([]);
+        setKeyWords([]);
+        setMethodology('');
+        setEquipment([]);
+        setExtraDetails({});
         setPresentationSteps([{ step: 'Step 1', activity: '' }]);
+        setFileUrl(null);
     };
 
     const addStep = () => {
@@ -330,11 +457,14 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
         setPresentationSteps(newSteps);
     };
 
-    const filteredNotes = notes.filter(n => 
-        n.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        n.strand.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        n.teacher?.full_name?.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filteredNotes = React.useMemo(() => {
+        const query = searchQuery.toLowerCase();
+        return notes.filter(n => 
+            (n.subject || '').toLowerCase().includes(query) ||
+            (n.strand || '').toLowerCase().includes(query) ||
+            (n.teacher?.full_name || '').toLowerCase().includes(query)
+        );
+    }, [notes, searchQuery]);
 
     if (isLoading) {
         return <div className="flex justify-center p-12"><div className="w-8 h-8 border-4 border-brand-600 border-t-transparent rounded-full animate-spin"></div></div>;
@@ -373,9 +503,7 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
             </div>
 
             {showForm && !isHeadteacher && (
-                <motion.form 
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
+                <form 
                     onSubmit={handleSubmit} 
                     className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-brand-100 dark:border-brand-900 shadow-lg space-y-6 no-print"
                 >
@@ -394,16 +522,104 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                         </button>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Week Ending</label>
-                            <input type="date" required value={weekEnding} onChange={e => setWeekEnding(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" />
+                    {statusMessage && (
+                        <div className={`p-4 rounded-xl border flex items-center gap-3 ${
+                            statusMessage.type === 'success' ? 'bg-green-50 border-green-100 text-green-700' : 'bg-red-50 border-red-100 text-red-700'
+                        }`}>
+                            {statusMessage.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <XCircle className="w-5 h-5" />}
+                            <p className="font-bold text-sm">{statusMessage.text}</p>
+                        </div>
+                    )}
+
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Upload Prepared Lesson Note (Optional)</label>
+                        <div className="flex items-center gap-4">
+                            <input 
+                                ref={fileInputRef}
+                                type="file" 
+                                className="hidden" 
+                                onChange={handleFileUpload}
+                                accept=".pdf,.doc,.docx"
+                            />
+                            <div 
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    if (!isUploading) fileInputRef.current?.click();
+                                }}
+                                className={`flex-grow flex flex-col items-center justify-center border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-2xl p-6 hover:bg-gray-50 dark:hover:bg-gray-900/40 transition-all cursor-pointer relative overflow-hidden group ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            >
+                                {isUploading ? (
+                                    <div className="flex flex-col items-center gap-2 text-center">
+                                        <Loader2 className="w-8 h-8 text-brand-600 animate-spin" />
+                                        <p className="text-sm font-medium text-gray-500">Uploading document...</p>
+                                    </div>
+                                ) : fileUrl ? (
+                                    <div className="flex flex-col items-center gap-2 text-center">
+                                        <div className="w-10 h-10 bg-green-100 dark:bg-green-900/30 text-green-600 rounded-full flex items-center justify-center">
+                                            <CheckCircle className="w-6 h-6" />
+                                        </div>
+                                        <p className="text-sm font-bold text-gray-900 dark:text-white">Document Prepared</p>
+                                        <button 
+                                            type="button" 
+                                            onClick={(e) => { 
+                                                e.preventDefault(); 
+                                                e.stopPropagation();
+                                                setFileUrl(null); 
+                                                if (fileInputRef.current) fileInputRef.current.value = '';
+                                            }}
+                                            className="text-xs text-red-500 hover:underline font-bold mt-1 z-10"
+                                        >
+                                            Remove and replace
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center gap-2 text-center">
+                                        <div className="w-12 h-12 bg-brand-50 dark:bg-brand-900/20 text-brand-600 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                                            <Upload className="w-6 h-6" />
+                                        </div>
+                                        <p className="text-sm font-bold text-gray-900 dark:text-white">Click to upload docx or pdf</p>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400">Max size 10MB • PDF, DOCX</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        {fileUrl && (
+                            <div className="mt-4 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden shadow-inner">
+                                <div className="bg-gray-50 dark:bg-gray-800 px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+                                    <span className="text-xs font-bold text-gray-600 dark:text-gray-300">Document Preview</span>
+                                </div>
+                                {fileUrl.toLowerCase().endsWith('.pdf') ? (
+                                    <iframe 
+                                        src={`${fileUrl}#toolbar=0`} 
+                                        className="w-full h-[400px] border-none"
+                                        title="Lesson Note Preview"
+                                    />
+                                ) : (fileUrl.toLowerCase().match(/\.(doc|docx)$/)) ? (
+                                    <iframe 
+                                        src={`https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`} 
+                                        className="w-full h-[400px] border-none"
+                                        title="Lesson Note Preview"
+                                    />
+                                ) : (
+                                    <div className="flex items-center justify-center h-32 text-gray-500 text-sm">Preview not available for this file type.</div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    {!fileUrl && (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Week Ending {fileUrl ? '(Optional)' : '(Required)'}</label>
+                            <input type="date" required={!fileUrl} value={weekEnding} onChange={e => setWeekEnding(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" />
                         </div>
                         <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Subject</label>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Subject {fileUrl ? '(Optional)' : '(Required)'}</label>
                             {assignedSubjects.length > 0 ? (
                                 <select 
-                                    required 
+                                    required={!fileUrl} 
                                     value={subject} 
                                     onChange={e => setSubject(e.target.value)} 
                                     className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
@@ -416,7 +632,7 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                             ) : (
                                 <input 
                                     type="text" 
-                                    required 
+                                    required={!fileUrl} 
                                     value={subject} 
                                     onChange={e => setSubject(e.target.value)} 
                                     className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" 
@@ -425,10 +641,10 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                             )}
                         </div>
                         <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Class</label>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Class {fileUrl ? '(Optional)' : '(Required)'}</label>
                             {assignedClasses.length > 0 ? (
                                 <select 
-                                    required 
+                                    required={!fileUrl} 
                                     value={className} 
                                     onChange={e => setClassName(e.target.value)} 
                                     className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600"
@@ -441,7 +657,7 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                             ) : (
                                 <input 
                                     type="text" 
-                                    required 
+                                    required={!fileUrl} 
                                     value={className} 
                                     onChange={e => setClassName(e.target.value)} 
                                     className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" 
@@ -449,9 +665,6 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                 />
                             )}
                         </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
                         <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Term</label>
                             <select 
@@ -464,7 +677,32 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                 <option>Term 3</option>
                             </select>
                         </div>
-                        <div className="md:col-span-1 lg:col-span-1">
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="md:col-span-1">
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Topic / Lesson Theme {fileUrl ? '(Optional)' : '(Required)'}</label>
+                            <input 
+                                type="text" 
+                                required={!fileUrl}
+                                value={topic} 
+                                onChange={e => setTopic(e.target.value)} 
+                                className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600 font-bold" 
+                                placeholder="e.g. Fractions"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Strand {fileUrl ? '(Optional)' : '(Required)'}</label>
+                            <input type="text" required={!fileUrl} value={strand} onChange={e => setStrand(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Sub-strand</label>
+                            <input type="text" value={subStrand} onChange={e => setSubStrand(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Day(s)</label>
                             <input 
                                 type="text" 
@@ -474,7 +712,7 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                 placeholder="e.g. Mon, Wed" 
                             />
                         </div>
-                        <div className="md:col-span-1 lg:col-span-1">
+                        <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Duration</label>
                             <input 
                                 type="text" 
@@ -484,19 +722,8 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                 placeholder="e.g. 60 mins" 
                             />
                         </div>
-                        <div className="md:col-span-1 lg:col-span-1">
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Strand</label>
-                            <input type="text" required value={strand} onChange={e => setStrand(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" />
-                        </div>
-                        <div className="md:col-span-1 lg:col-span-1">
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">SUB-STRAND</label>
-                            <input type="text" value={subStrand} onChange={e => setSubStrand(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" />
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Reference</label>
+                        <div className="md:col-span-2">
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Reference / Textbooks</label>
                             <input 
                                 type="text" 
                                 value={reference} 
@@ -505,6 +732,9 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                 placeholder="e.g. GES New Curriculum, Page 45"
                             />
                         </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Number of Learning Indicators</label>
                             <input 
@@ -524,9 +754,45 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                     </div>
 
                     <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Learning Indicators / Objectives</label>
-                        <textarea required value={learningIndicators} onChange={e => setLearningIndicators(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600 h-24 resize-none" placeholder="What should students achieve?" />
+                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Learning Indicators / Objectives {fileUrl ? '(Optional)' : '(Required)'}</label>
+                        <textarea required={!fileUrl} value={learningIndicators} onChange={e => setLearningIndicators(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600 h-24 resize-none" placeholder="What should students achieve?" />
                     </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Methodology / Teaching Strategy</label>
+                            <input 
+                                type="text" 
+                                value={methodology} 
+                                onChange={e => setMethodology(e.target.value)} 
+                                className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" 
+                                placeholder="e.g. Inquiry Based, CLT, Demonstrations"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Key Words / Vocabulary</label>
+                            <input 
+                                type="text" 
+                                value={keyWords.join(', ')} 
+                                onChange={e => setKeyWords(e.target.value.split(',').map(s => s.trim()))} 
+                                className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" 
+                                placeholder="e.g. Algebra, Variable, Coefficient"
+                            />
+                        </div>
+                    </div>
+
+                    {(subject.toLowerCase().includes('science') || subject.toLowerCase().includes('ict') || subject.toLowerCase().includes('arts')) && (
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Equipment / Apparatus / Materials</label>
+                            <input 
+                                type="text" 
+                                value={equipment.join(', ')} 
+                                onChange={e => setEquipment(e.target.value.split(',').map(s => s.trim()))} 
+                                className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600" 
+                                placeholder="List required items..."
+                            />
+                        </div>
+                    )}
 
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
@@ -564,6 +830,8 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                             <textarea value={evaluation} onChange={e => setEvaluation(e.target.value)} className="w-full p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600 h-20 resize-none" />
                         </div>
                     </div>
+                        </>
+                    )}
 
                     <div className="flex justify-end gap-3">
                         <button type="button" onClick={() => { setShowForm(false); resetForm(); setIsEditing(false); setEditingNoteId(null); }} className="px-4 py-2 text-gray-500 hover:text-gray-700 font-medium">Cancel</button>
@@ -571,13 +839,12 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                             {isActionLoading ? 'Saving...' : isEditing ? 'Update Lesson Note' : 'Submit Lesson Note'}
                         </button>
                     </div>
-                </motion.form>
+                </form>
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 no-print">
                 {filteredNotes.map(note => (
-                    <motion.div 
-                        layout
+                    <div 
                         key={note.id} 
                         className={`bg-white dark:bg-gray-800 p-5 rounded-2xl border transition-all cursor-pointer hover:shadow-md ${selectedNote?.id === note.id ? 'border-brand-500 ring-2 ring-brand-500/20' : 'border-gray-100 dark:border-gray-700'}`}
                         onClick={() => setSelectedNote(note)}
@@ -648,7 +915,7 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                 <span className="text-[10px] font-bold text-brand-600">By: {note.teacher?.full_name}</span>
                             )}
                         </div>
-                    </motion.div>
+                    </div>
                 ))}
                 {filteredNotes.length === 0 && (
                     <div className="col-span-full py-12 text-center text-gray-500">
@@ -659,16 +926,10 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
             </div>
 
             {/* Detailed View / Print View */}
-            <AnimatePresence>
-                {selectedNote && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm no-print">
-                        <motion.div 
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            exit={{ opacity: 0, scale: 0.95 }}
-                            className="bg-white dark:bg-gray-800 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl flex flex-col"
-                        >
-                            <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between sticky top-0 bg-white dark:bg-gray-800 z-10">
+            {selectedNote && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 no-print">
+                    <div className="bg-white dark:bg-gray-800 w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-3xl shadow-2xl flex flex-col relative animate-in fade-in zoom-in duration-200">
+                        <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex items-center justify-between sticky top-0 bg-white dark:bg-gray-800 z-10">
                                 <div className="flex items-center gap-4">
                                     {schoolSettings?.logo_url && (
                                         <img 
@@ -747,14 +1008,60 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                         <p className="font-bold">{selectedNote.duration || 'N/A'}</p>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-bold text-gray-400 uppercase">Reference</label>
-                                        <p className="font-bold">{selectedNote.reference || 'N/A'}</p>
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase">Topic</label>
+                                        <p className="font-bold">{selectedNote.topic || 'N/A'}</p>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase">Strand</label>
+                                        <p className="font-bold">{selectedNote.strand}</p>
                                     </div>
                                     <div>
                                         <label className="text-[10px] font-bold text-gray-400 uppercase">Teacher</label>
                                         <p className="font-bold">{selectedNote.teacher?.full_name || profile.full_name}</p>
                                     </div>
                                 </div>
+
+                                {selectedNote.file_url && (
+                                    <div className="p-4 bg-brand-50 dark:bg-brand-900/20 border border-brand-100 dark:border-brand-800 rounded-2xl flex items-center justify-between gap-4">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 bg-brand-600 text-white rounded-xl flex items-center justify-center">
+                                                <FileText className="w-6 h-6" />
+                                            </div>
+                                            <div>
+                                                <h4 className="text-sm font-bold text-gray-900 dark:text-white">Attached Lesson Note File</h4>
+                                                <p className="text-xs text-gray-500 dark:text-gray-400">Click to view or download the prepared document.</p>
+                                            </div>
+                                        </div>
+                                        <a 
+                                            href={selectedNote.file_url} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="px-4 py-2 bg-brand-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-brand-700 transition-all text-sm"
+                                        >
+                                            <ExternalLink className="w-4 h-4" />
+                                            View Document
+                                        </a>
+                                    </div>
+                                )}
+
+                                {/* File Preview */}
+                                {selectedNote.file_url && (
+                                    <div className="mt-4 border border-gray-100 dark:border-gray-700 rounded-2xl overflow-hidden no-print">
+                                        {selectedNote.file_url.toLowerCase().endsWith('.pdf') ? (
+                                            <iframe 
+                                                src={`${selectedNote.file_url}#toolbar=0`} 
+                                                className="w-full h-[600px] border-none"
+                                                title="Lesson Note Preview"
+                                            />
+                                        ) : (selectedNote.file_url.toLowerCase().match(/\.(doc|docx)$/)) ? (
+                                            <iframe 
+                                                src={`https://docs.google.com/viewer?url=${encodeURIComponent(selectedNote.file_url)}&embedded=true`} 
+                                                className="w-full h-[600px] border-none"
+                                                title="Lesson Note Preview"
+                                            />
+                                        ) : null}
+                                    </div>
+                                )}
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                     <div className="space-y-4">
@@ -767,6 +1074,32 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                             <h4 className="text-xs font-bold text-brand-600 uppercase tracking-widest mb-2">RPK</h4>
                                             <p className="text-sm text-gray-600 dark:text-gray-400">{selectedNote.rpk || 'N/A'}</p>
                                         </div>
+                                        {selectedNote.methodology && (
+                                            <div>
+                                                <h4 className="text-xs font-bold text-brand-600 uppercase tracking-widest mb-2">Methodology</h4>
+                                                <p className="text-sm text-gray-600 dark:text-gray-400">{selectedNote.methodology}</p>
+                                            </div>
+                                        )}
+                                        {selectedNote.key_words && selectedNote.key_words.length > 0 && (
+                                            <div>
+                                                <h4 className="text-xs font-bold text-brand-600 uppercase tracking-widest mb-2">Key Vocabulary</h4>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {selectedNote.key_words.map((kw, i) => (
+                                                        <span key={i} className="px-2 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded text-xs border border-blue-100 dark:border-blue-800">{kw}</span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {selectedNote.equipment && selectedNote.equipment.length > 0 && (
+                                            <div>
+                                                <h4 className="text-xs font-bold text-brand-600 uppercase tracking-widest mb-2">Equipment / Materials</h4>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {selectedNote.equipment.map((eq, i) => (
+                                                        <span key={i} className="px-2 py-1 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded text-xs border border-purple-100 dark:border-purple-800">{eq}</span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
                                         <div>
                                             <h4 className="text-xs font-bold text-brand-600 uppercase tracking-widest mb-2">Core Competencies</h4>
                                             <div className="flex flex-wrap gap-2">
@@ -852,10 +1185,10 @@ const LessonNotesPage: React.FC<LessonNotesPageProps> = ({ profile }) => {
                                     </div>
                                 )}
                             </div>
-                        </motion.div>
                     </div>
-                )}
-            </AnimatePresence>            {/* Print-only layout - Formatted like traditional GES template */}
+                </div>
+            )}
+            {/* Print-only layout - Formatted like traditional GES template */}
             <div className="hidden print:block print-content bg-white text-black p-4 font-serif">
                 {selectedNote && (
                     <div className="border-[3px] border-black p-6 space-y-6">

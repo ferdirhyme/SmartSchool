@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../../lib/supabase.ts';
 import { useSettings } from '../../contexts/SettingsContext.tsx';
@@ -51,289 +51,361 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
     const [locationError, setLocationError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [lastRefreshTime, setLastRefreshTime] = useState(Date.now());
 
-    useEffect(() => {
-        const fetchDashboardData = async () => {
-            setIsLoading(true);
-            setError(null);
-            try {
-                const today = new Date();
-                const dayOfWeek = today.getDay(); // Sunday - 0, Monday - 1, etc.
-                const todayStr = today.toISOString().split('T')[0];
-                
-                let currentTeacherId = null;
-                const { data: teacherIdData, error: rpcError } = await supabase
-                    .rpc('get_teacher_id_by_auth_email');
-                
-                if (rpcError) {
-                    console.warn('RPC get_teacher_id_by_auth_email failed, attempting direct query:', rpcError);
-                    const { data: { session: authSession } } = await supabase.auth.getSession();
-                    if (authSession?.user?.email) {
-                        const { data: teacherRecord } = await supabase
-                            .from('teachers')
-                            .select('id')
-                            .eq('email', authSession.user.email)
-                            .maybeSingle();
-                        if (teacherRecord) {
-                            currentTeacherId = teacherRecord.id;
-                        }
-                    }
-                    // If we still don't have it, but we have an RPC error, ONLY throw if we are sure it's a fatal DB error
-                    if (!currentTeacherId && !rpcError.message.includes('Could not find')) {
-                         // Check for the "null" UUID error specifically to provide a better message
-                         if (rpcError.message.includes('uuid') && rpcError.message.includes('null')) {
-                             // This is handled by the !currentTeacherId check below
-                         } else {
-                             throw rpcError;
-                         }
-                    }
-                } else {
-                    currentTeacherId = teacherIdData;
-                }
-                
-                // Safe check for null or "null" string
-                if (currentTeacherId === 'null') currentTeacherId = null;
-                setTeacherId(currentTeacherId);
-                
-                if (!currentTeacherId) {
-                    throw new Error(`Your user account (${session.user.email}) is not yet linked to a teacher profile in the system.`);
-                }
-
-                const { data: teacherData, error: teacherError } = await supabase
-                    .from('teachers')
-                    .select('*, teachable_classes:teacher_classes(is_homeroom, class:classes(*))')
-                    .eq('id', currentTeacherId)
-                    .single();
-                
-                if (teacherError) throw teacherError;
-                
-                // Use school_id from teacher record if profile's is missing
-                const fetchedSchoolId = teacherData.school_id || profile.school_id;
-                setSchoolId(fetchedSchoolId);
-                
-                const foundHomeroom = (teacherData.teachable_classes as any[] || []).find(tc => tc.is_homeroom)?.class;
-                setHomeroomClass(foundHomeroom || null);
-
-                const { data: scheduleData, error: scheduleError } = await supabase
-                    .from('timetable')
-                    .select('*, time_slot:time_slots(*), subject:subjects(name), class:classes(name)')
-                    .eq('teacher_id', teacherData.id)
-                    .eq('day_of_week', dayOfWeek)
-                    .eq('school_id', fetchedSchoolId)
-                    .order('start_time', { foreignTable: 'time_slots' });
-                if (scheduleError) throw scheduleError;
-                setSchedule(scheduleData as any[] || []);
-
-                if (foundHomeroom) {
-                    const { data: attendanceData, error: attendanceError } = await supabase
-                        .from('student_attendance')
+    const fetchDashboardData = useCallback(async () => {
+        setIsLoading(true);
+        setError(null);
+        try {
+            const now = new Date();
+            const todayStr = now.toLocaleDateString('en-CA'); // YYYY-MM-DD in local time
+            
+            let currentTeacherId = null;
+            const { data: teacherIdData, error: rpcError } = await supabase
+                .rpc('get_teacher_id_by_auth_email');
+            
+            if (rpcError) {
+                console.warn('RPC get_teacher_id_by_auth_email failed, attempting direct query:', rpcError);
+                const { data: { session: authSession } } = await supabase.auth.getSession();
+                if (authSession?.user?.email) {
+                    const { data: teacherRecord } = await supabase
+                        .from('teachers')
                         .select('id')
-                        .eq('class_id', foundHomeroom.id)
-                        .eq('attendance_date', todayStr)
-                        .eq('school_id', fetchedSchoolId)
-                        .limit(1);
-                    if (attendanceError) throw attendanceError;
-                    setIsAttendanceTaken(attendanceData.length > 0);
-                }
-
-                if (fetchedSchoolId) {
-                    const [announcementRes, rejectedSchemesRes] = await Promise.all([
-                        supabase.from('announcements')
-                            .select('*')
-                            .eq('school_id', fetchedSchoolId)
-                            .gte('expiry_date', todayStr)
-                            .order('created_at', { ascending: false })
-                            .limit(3),
-                        supabase.from('schemes_of_learning')
-                            .select('*', { count: 'exact', head: true })
-                            .eq('teacher_id', currentTeacherId)
-                            .eq('status', 'rejected')
-                    ]);
-                    
-                    if (announcementRes.error) throw announcementRes.error;
-                    setAnnouncements(announcementRes.data || []);
-                    setRejectedSchemesCount(rejectedSchemesRes.count || 0);
-                }
-
-                const { data: staffAttendanceData, error: staffAttendanceError } = await supabase
-                    .from('teacher_attendance')
-                    .select('*')
-                    .eq('teacher_id', currentTeacherId)
-                    .eq('attendance_date', todayStr)
-                    .maybeSingle();
-                
-                if (staffAttendanceError) throw staffAttendanceError;
-                setStaffAttendance(staffAttendanceData);
-
-                // Real Performance Trend & Top Performer
-                const { data: assessments } = await supabase
-                    .from('student_assessments')
-                    .select('*, student:students(id, full_name), subject:subjects(name)')
-                    .eq('school_id', fetchedSchoolId);
-                
-                if (assessments && assessments.length > 0) {
-                    // Group by students for top performer
-                    const studentAverages: any = {};
-                    assessments.forEach(a => {
-                        if (!studentAverages[a.student_id]) {
-                            studentAverages[a.student_id] = { name: a.student.full_name, total: 0, count: 0, subject: a.subject.name };
-                        }
-                        studentAverages[a.student_id].total += a.total_score || 0;
-                        studentAverages[a.student_id].count++;
-                    });
-
-                    const performers = Object.values(studentAverages).map((s: any) => ({
-                        ...s,
-                        average: s.total / s.count
-                    })).sort((a, b) => b.average - a.average);
-
-                    if (performers.length > 0) {
-                        setTopPerformer(performers[0]);
+                        .eq('email', authSession.user.email)
+                        .maybeSingle();
+                    if (teacherRecord) {
+                        currentTeacherId = teacherRecord.id;
                     }
+                }
+                // If we still don't have it, but we have an RPC error, ONLY throw if we are sure it's a fatal DB error
+                if (!currentTeacherId && !rpcError.message.includes('Could not find')) {
+                     // Check for the "null" UUID error specifically to provide a better message
+                     if (rpcError.message.includes('uuid') && rpcError.message.includes('null')) {
+                         // This is handled by the !currentTeacherId check below
+                     } else {
+                         throw rpcError;
+                     }
+                }
+            } else {
+                currentTeacherId = teacherIdData;
+            }
+            
+            // Safe check for null or "null" string
+            if (currentTeacherId === 'null') currentTeacherId = null;
+            setTeacherId(currentTeacherId);
+            
+            if (!currentTeacherId) {
+                throw new Error(`Your user account (${session.user.email}) is not yet linked to a teacher profile in the system.`);
+            }
 
-                    // Performance Trend (Group by term/week if available, or just term)
-                    const termTrend = assessments.reduce((acc: any, a) => {
-                        const term = `Term ${a.term}`;
-                        if (!acc[term]) acc[term] = { total: 0, count: 0 };
-                        acc[term].total += a.total_score || 0;
-                        acc[term].count++;
+            const { data: teacherData, error: teacherError } = await supabase
+                .from('teachers')
+                .select('*, teachable_classes:teacher_classes(is_homeroom, class:classes(*))')
+                .eq('id', currentTeacherId)
+                .single();
+            
+            if (teacherError) throw teacherError;
+            
+            // Use school_id from teacher record if profile's is missing
+            const fetchedSchoolId = teacherData.school_id || profile.school_id;
+            setSchoolId(fetchedSchoolId);
+            
+            const foundHomeroom = (teacherData.teachable_classes as any[] || []).find(tc => tc.is_homeroom)?.class;
+            setHomeroomClass(foundHomeroom || null);
+
+            const dayOfWeek = now.getDay();
+            const { data: scheduleData, error: scheduleError } = await supabase
+                .from('timetable')
+                .select('*, time_slot:time_slots(*), subject:subjects(name), class:classes(name)')
+                .eq('teacher_id', teacherData.id)
+                .eq('day_of_week', dayOfWeek)
+                .eq('school_id', fetchedSchoolId)
+                .order('start_time', { foreignTable: 'time_slots' });
+            if (scheduleError) throw scheduleError;
+            setSchedule(scheduleData as any[] || []);
+
+            if (foundHomeroom) {
+                const { data: attendanceData, error: attendanceError } = await supabase
+                    .from('student_attendance')
+                    .select('id')
+                    .eq('class_id', foundHomeroom.id)
+                    .eq('attendance_date', todayStr)
+                    .eq('school_id', fetchedSchoolId)
+                    .limit(1);
+                if (attendanceError) throw attendanceError;
+                setIsAttendanceTaken(attendanceData.length > 0);
+            }
+
+            if (fetchedSchoolId) {
+                const [announcementRes, rejectedSchemesRes] = await Promise.all([
+                    supabase.from('announcements')
+                        .select('*')
+                        .eq('school_id', fetchedSchoolId)
+                        .gte('expiry_date', todayStr)
+                        .order('created_at', { ascending: false })
+                        .limit(3),
+                    supabase.from('schemes_of_learning')
+                        .select('*', { count: 'exact', head: true })
+                        .eq('teacher_id', currentTeacherId)
+                        .eq('status', 'rejected')
+                ]);
+                
+                if (announcementRes.error) throw announcementRes.error;
+                setAnnouncements(announcementRes.data || []);
+                setRejectedSchemesCount(rejectedSchemesRes.count || 0);
+            }
+
+            const { data: staffAttendanceData, error: staffAttendanceError } = await supabase
+                .from('teacher_attendance')
+                .select('*')
+                .eq('teacher_id', currentTeacherId)
+                .eq('attendance_date', todayStr)
+                .maybeSingle();
+            
+            if (staffAttendanceError) throw staffAttendanceError;
+            setStaffAttendance(staffAttendanceData);
+
+            // Forced Auto-Checkout: Close any unclosed sessions from prior days
+            // We do this proactively when the dashboard loads
+            try {
+                const { data: staleRecords } = await supabase
+                    .from('teacher_attendance')
+                    .select('id, attendance_date')
+                    .eq('teacher_id', currentTeacherId)
+                    .lt('attendance_date', todayStr)
+                    .is('check_out_time', null);
+
+                if (staleRecords && staleRecords.length > 0) {
+                    console.log(`Auto-closing ${staleRecords.length} stale attendance records...`);
+                    // Update them to a default checkout time (e.g., 17:00:00)
+                    // We use a safe default if specific school closing time isn't set
+                    await supabase
+                        .from('teacher_attendance')
+                        .update({ 
+                            check_out_time: '17:00:00',
+                            // Optionally mark as auto-completed or similar if status allowed it
+                        })
+                        .in('id', staleRecords.map(r => r.id));
+                }
+            } catch (cleanupErr) {
+                console.warn("Minor error during auto-checkout cleanup:", cleanupErr);
+                // We don't throw here as it shouldn't block the main dashboard load
+            }
+
+            // Real Performance Trend & Top Performer
+            const { data: assessments } = await supabase
+                .from('student_assessments')
+                .select('*, student:students(id, full_name), subject:subjects(name)')
+                .eq('school_id', fetchedSchoolId);
+            
+            if (assessments && assessments.length > 0) {
+                // Group by students for top performer
+                const studentAverages: any = {};
+                assessments.forEach(a => {
+                    if (!studentAverages[a.student_id]) {
+                        studentAverages[a.student_id] = { name: a.student.full_name, total: 0, count: 0, subject: a.subject.name };
+                    }
+                    studentAverages[a.student_id].total += a.total_score || 0;
+                    studentAverages[a.student_id].count++;
+                });
+
+                const performers = Object.values(studentAverages).map((s: any) => ({
+                    ...s,
+                    average: s.total / s.count
+                })).sort((a, b) => b.average - a.average);
+
+                if (performers.length > 0) {
+                    setTopPerformer(performers[0]);
+                }
+
+                // Performance Trend
+                const termTrend = assessments.reduce((acc: any, a) => {
+                    const term = `Term ${a.term}`;
+                    if (!acc[term]) acc[term] = { total: 0, count: 0 };
+                    acc[term].total += a.total_score || 0;
+                    acc[term].count++;
+                    return acc;
+                }, {});
+
+                setPerformanceTrend(Object.keys(termTrend).map(term => ({
+                    name: term,
+                    score: termTrend[term].total / termTrend[term].count
+                })));
+            }
+
+            // Real Homeroom Attendance Breakdown
+            if (foundHomeroom) {
+                let query = supabase
+                    .from('student_attendance')
+                    .select('status')
+                    .eq('class_id', foundHomeroom.id);
+                
+                if (settings?.term_start_date) {
+                    query = query.gte('attendance_date', settings.term_start_date);
+                } else {
+                    const ninetyDaysAgo = new Date();
+                    ninetyDaysAgo.setDate(now.getDate() - 90);
+                    query = query.gte('attendance_date', ninetyDaysAgo.toISOString().split('T')[0]);
+                }
+
+                if (settings?.term_end_date) {
+                    query = query.lte('attendance_date', settings.term_end_date);
+                }
+
+                const { data: termAttendance } = await query;
+                
+                if (termAttendance && termAttendance.length > 0) {
+                    const counts = termAttendance.reduce((acc: any, curr) => {
+                        acc[curr.status] = (acc[curr.status] || 0) + 1;
                         return acc;
                     }, {});
 
-                    setPerformanceTrend(Object.keys(termTrend).map(term => ({
-                        name: term,
-                        score: termTrend[term].total / termTrend[term].count
-                    })));
+                    setHomeroomAttendanceData([
+                        { name: 'Present', value: counts['Present'] || 0, color: '#10B981' },
+                        { name: 'Late', value: counts['Late'] || 0, color: '#FBBF24' },
+                        { name: 'Absent', value: counts['Absent'] || 0, color: '#EF4444' },
+                    ]);
+                } else {
+                    setHomeroomAttendanceData([
+                        { name: 'No Records', value: 1, color: '#E5E7EB' }
+                    ]);
                 }
-
-                // Real Homeroom Attendance Breakdown (Current Term Summary)
-                if (foundHomeroom) {
-                    let query = supabase
-                        .from('student_attendance')
-                        .select('status')
-                        .eq('class_id', foundHomeroom.id);
-                    
-                    if (settings?.term_start_date) {
-                        query = query.gte('attendance_date', settings.term_start_date);
-                    } else {
-                        // Fallback to last 90 days if no term start date
-                        const ninetyDaysAgo = new Date();
-                        ninetyDaysAgo.setDate(today.getDate() - 90);
-                        query = query.gte('attendance_date', ninetyDaysAgo.toISOString().split('T')[0]);
-                    }
-
-                    if (settings?.term_end_date) {
-                        query = query.lte('attendance_date', settings.term_end_date);
-                    }
-
-                    const { data: termAttendance } = await query;
-                    
-                    if (termAttendance && termAttendance.length > 0) {
-                        const counts = termAttendance.reduce((acc: any, curr) => {
-                            acc[curr.status] = (acc[curr.status] || 0) + 1;
-                            return acc;
-                        }, {});
-
-                        setHomeroomAttendanceData([
-                            { name: 'Present', value: counts['Present'] || 0, color: '#10B981' },
-                            { name: 'Late', value: counts['Late'] || 0, color: '#FBBF24' },
-                            { name: 'Absent', value: counts['Absent'] || 0, color: '#EF4444' },
-                        ]);
-                    } else {
-                        // Fallback placeholder if no attendance records found in the period
-                        setHomeroomAttendanceData([
-                            { name: 'No Records', value: 1, color: '#E5E7EB' }
-                        ]);
-                    }
-                }
-
-                // Lesson completion mock (could be linked to scheme of learning)
-                setLessonCompletion(foundHomeroom ? 85 : 0);
-
-            } catch (error: any) {
-                console.error("Error fetching teacher dashboard data:", error);
-                setError(error.message || "Failed to load dashboard data.");
-            } finally {
-                setIsLoading(false);
             }
-        };
 
+            setLessonCompletion(foundHomeroom ? 85 : 0);
+
+        } catch (error: any) {
+            console.error("Error fetching teacher dashboard data:", error);
+            setError(error.message || "Failed to load dashboard data.");
+        } finally {
+            setIsLoading(false);
+            setLastRefreshTime(Date.now());
+        }
+    }, [session.user.id, profile.school_id, settings?.id, session.user.email]);
+
+    useEffect(() => {
         fetchDashboardData();
-    }, [session.user.id, profile.school_id, settings?.id]);
+    }, [fetchDashboardData]);
+
+    const handleManualRefresh = () => {
+        fetchDashboardData();
+    };
 
     const handleStaffCheckIn = async (bypassLocation = false) => {
-        if (!teacherId) {
-            alert("Teacher ID not found. Please refresh the page.");
+        let activeTeacherId = teacherId;
+        let activeSchoolId = schoolId;
+
+        // Proactive ID Recovery: If IDs are missing from state, try one last fetch before giving up
+        if (!activeTeacherId) {
+            const { data: { session: authSession } } = await supabase.auth.getSession();
+            if (authSession?.user?.email) {
+                const { data: recoveredTeacher } = await supabase
+                    .from('teachers')
+                    .select('id, school_id')
+                    .eq('email', authSession.user.email)
+                    .maybeSingle();
+                
+                if (recoveredTeacher) {
+                    activeTeacherId = recoveredTeacher.id;
+                    activeSchoolId = recoveredTeacher.school_id || activeSchoolId;
+                    setTeacherId(activeTeacherId);
+                    if (recoveredTeacher.school_id) setSchoolId(activeSchoolId);
+                }
+            }
+        }
+
+        if (!activeTeacherId) {
+            alert("Teacher profile not found. Please ensure the Headteacher has added your email to the staff list.");
             return;
         }
-        if (!schoolId) {
-            alert("School ID not found on your profile. Please contact an administrator.");
+        if (!activeSchoolId) {
+            alert("School ID not found. Your teacher profile might not be correctly linked to a school. Please contact an administrator.");
             return;
         }
 
         setIsCheckingIn(true);
         setLocationError(null);
         try {
-            const today = new Date();
-            const todayStr = today.toISOString().split('T')[0];
-            const nowTime = today.toTimeString().split(' ')[0]; // HH:MM:SS
+            const now = new Date();
+            const todayStr = now.toLocaleDateString('en-CA');
+            const nowTime = now.toTimeString().split(' ')[0]; 
 
             // Fetch latest school settings to ensure we have the most up-to-date coordinates
             const { data: latestSettings, error: settingsError } = await supabase
                 .from('school_settings')
                 .select('school_latitude, school_longitude')
-                .eq('id', schoolId)
+                .eq('id', activeSchoolId)
                 .single();
 
             if (settingsError) {
                 console.error("Error fetching school settings:", settingsError);
+                throw new Error("Unable to load school coordinates for verification.");
             }
 
-            const lat = latestSettings?.school_latitude || settings?.school_latitude;
-            const lng = latestSettings?.school_longitude || settings?.school_longitude;
+            const schoolLat = parseFloat(latestSettings?.school_latitude);
+            const schoolLng = parseFloat(latestSettings?.school_longitude);
+
+            console.log("Checking in with school coordinates:", { schoolLat, schoolLng });
 
             // Mandatory: Location verification if school location is set
-            if (!lat || !lng) {
-                setLocationError("School location has not been set by the Headteacher. Check-in is disabled until the school coordinates are configured in Settings.");
+            if (!Number.isFinite(schoolLat) || !Number.isFinite(schoolLng)) {
+                setLocationError("School location has not been correctly set by the Headteacher. Check-in is disabled until the school coordinates are configured in Settings.");
                 setIsCheckingIn(false);
                 return;
             }
 
             if (!bypassLocation) {
                 try {
-                    await verifyLocation(lat, lng, 500);
+                    console.log(`Verifying staff location against coordinates (${schoolLat}, ${schoolLng}) with 300m radius...`);
+                    // Reduced radius to 300m for tighter security but still allowing for GPS drift
+                    await verifyLocation(schoolLat, schoolLng, 300); 
+                    console.log("Location verification successful.");
                 } catch (e: any) {
+                    console.error("Location verification failed error:", e);
                     setLocationError(e.message || "Location verification failed.");
                     setIsCheckingIn(false);
                     return;
                 }
             }
 
+            // Before upsert, check if already exists to avoid overwriting check_in_time if user clicks twice quickly
+            const { data: existingRecord } = await supabase
+                .from('teacher_attendance')
+                .select('*')
+                .eq('teacher_id', activeTeacherId)
+                .eq('attendance_date', todayStr)
+                .maybeSingle();
+
+            if (existingRecord) {
+                setStaffAttendance(existingRecord);
+                setIsCheckingIn(false);
+                return;
+            }
+
             const { data, error: insertError } = await supabase
                 .from('teacher_attendance')
-                .insert({
-                    teacher_id: teacherId,
-                    school_id: schoolId,
+                .upsert({
+                    teacher_id: activeTeacherId,
+                    school_id: activeSchoolId,
                     attendance_date: todayStr,
                     check_in_time: nowTime,
                     status: 'Present'
-                })
+                }, { onConflict: 'teacher_id,attendance_date' })
                 .select()
-                .maybeSingle();
+                .single();
 
-            if (insertError) throw insertError;
+            if (insertError) {
+                console.error("Detailed check-in error:", insertError);
+                if (insertError.code === '42501') {
+                   throw new Error("Permission denied. Your teacher profile might not be correctly linked to your school account. Please contact an administrator.");
+                }
+                throw insertError;
+            }
+            
             if (data) {
                 setStaffAttendance(data);
             } else {
-                // If maybeSingle returns null, it might be because of RLS or unique constraint
-                // Let's try to fetch it again just in case it was already created
-                const { data: existing } = await supabase
-                    .from('teacher_attendance')
-                    .select('*')
-                    .eq('teacher_id', teacherId)
-                    .eq('attendance_date', todayStr)
-                    .maybeSingle();
-                if (existing) setStaffAttendance(existing);
+                throw new Error("Check-in failed: Could not create or retrieve your attendance record for today.");
             }
         } catch (err: any) {
             console.error("Check-in error:", err);
@@ -345,34 +417,39 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
 
     const handleStaffCheckOut = async (bypassLocation = false) => {
         if (!staffAttendance) return;
+        
+        let activeSchoolId = schoolId || staffAttendance.school_id;
+
         setIsCheckingIn(true);
         setLocationError(null);
         try {
-            // Fetch latest school settings to ensure we have the most up-to-date coordinates
+            // Fetch latest school settings
             const { data: latestSettings, error: settingsError } = await supabase
                 .from('school_settings')
                 .select('school_latitude, school_longitude')
-                .eq('id', schoolId)
-                .single();
+                .eq('id', activeSchoolId)
+                .maybeSingle();
 
             if (settingsError) {
                 console.error("Error fetching school settings:", settingsError);
             }
 
-            const lat = latestSettings?.school_latitude || settings?.school_latitude;
-            const lng = latestSettings?.school_longitude || settings?.school_longitude;
+            const schoolLat = parseFloat(latestSettings?.school_latitude);
+            const schoolLng = parseFloat(latestSettings?.school_longitude);
+
+            console.log("Checking out with school coordinates:", { schoolLat, schoolLng });
 
             // Also verify location for check-out to be consistent
-            if (!lat || !lng) {
-                setLocationError("School location has not been set by the Headteacher. Check-out is disabled until the school coordinates are configured in Settings.");
-                setIsCheckingIn(false);
-                return;
-            }
-
-            if (!bypassLocation) {
+            if (!Number.isFinite(schoolLat) || !Number.isFinite(schoolLng)) {
+                // If we don't have settings, we'll allow check-out without verification instead of blocking
+                console.warn("School location not set formatted for check-out verification, proceeding without location check.");
+            } else if (!bypassLocation) {
                 try {
-                    await verifyLocation(lat, lng, 500);
+                    console.log(`Verifying staff location for checkout against coordinates (${schoolLat}, ${schoolLng}) with 300m radius...`);
+                    await verifyLocation(schoolLat, schoolLng, 300);
+                    console.log("Checkout location verification successful.");
                 } catch (e: any) {
+                    console.error("Checkout location verification failed:", e);
                     setLocationError("Check-out failed: " + (e.message || "Location verification failed."));
                     setIsCheckingIn(false);
                     return;
@@ -391,6 +468,7 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
             if (error) throw error;
             setStaffAttendance(data);
         } catch (err: any) {
+            console.error("Check-out error:", err);
             alert(err.message || "Failed to check out.");
         } finally {
             setIsCheckingIn(false);
@@ -420,6 +498,9 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
     const formatTime = (time: string) => {
         if (!time) return '--:--';
         try {
+            if (time.includes('T')) {
+                return new Date(time).toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric' });
+            }
             const date = new Date(`1970-01-01T${time.includes(':') ? time : '00:00'}${time.split(':').length === 2 ? ':00' : ''}Z`);
             if (isNaN(date.getTime())) return time;
             return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: 'numeric', timeZone: 'UTC' });
@@ -430,8 +511,25 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
 
     return (
         <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome, {profile.full_name}!</h1>
-            <p className="text-gray-600 dark:text-gray-300 mb-8">Here is your summary for today.</p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome, {profile.full_name}!</h1>
+                    <p className="text-gray-600 dark:text-gray-300">Here is your summary for today.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                    <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest hidden sm:block">
+                        Last updated: {new Date(lastRefreshTime).toLocaleTimeString()}
+                    </p>
+                    <button 
+                        onClick={handleManualRefresh}
+                        disabled={isLoading}
+                        className="p-2.5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-all text-gray-500 dark:text-gray-400 shadow-sm disabled:opacity-50"
+                        title="Refresh data"
+                    >
+                        <CloudSync className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                </div>
+            </div>
 
             {/* Performance Insights Infographic */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
@@ -632,12 +730,6 @@ const TeacherDashboardHome: React.FC<TeacherDashboardHomeProps> = ({ session, pr
                                                 className="mt-3 text-[10px] font-bold text-brand-600 hover:underline uppercase mr-4"
                                             >
                                                 Dismiss and try again
-                                            </button>
-                                            <button 
-                                                onClick={() => !staffAttendance ? handleStaffCheckIn(true) : handleStaffCheckOut(true)}
-                                                className="mt-3 text-[10px] font-bold text-orange-600 hover:underline uppercase"
-                                            >
-                                                Bypass Location Check (Dev Only)
                                             </button>
                                         </div>
                                     </div>

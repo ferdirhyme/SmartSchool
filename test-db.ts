@@ -11,3 +11,5 @@ async function listTables() {
     console.log('Tables:', data);
   }
 }
+
+listTables();

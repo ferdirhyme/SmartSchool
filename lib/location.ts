@@ -17,68 +17,123 @@ export const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2
     return R * c; // in metres
 };
 
+// Application-level cache for last successful location to handle browser throttling/service hang on subsequent calls
+let lastSuccessfulPosition: GeolocationPosition | null = null;
+let lastFetchTime: number = 0;
+const CACHE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+
 export const getCurrentLocation = async (): Promise<GeolocationPosition> => {
-    const getLocation = (highAccuracy: boolean, timeout: number): Promise<GeolocationPosition> => {
+    // If we have a very fresh application-level cache (less than 30s), use it immediately
+    // This dramatically speeds up consecutive calls and avoids browser throttling
+    if (lastSuccessfulPosition && (Date.now() - lastFetchTime < 30000)) {
+        console.log("Using fresh application-level location cache (less than 30s old)");
+        return lastSuccessfulPosition;
+    }
+
+    const getLocation = (highAccuracy: boolean, timeout: number, maxAge: number): Promise<GeolocationPosition> => {
         return new Promise((resolve, reject) => {
             if (!navigator.geolocation) {
                 return reject(new Error("Geolocation is not supported by your browser."));
             }
             
-            // Set a very generous safety timeout (2 minutes)
+            // Set a safety timeout that is slightly longer than the requested timeout
             // This is mainly to prevent the app from hanging forever if the browser doesn't respond
-            // Note: The built-in 'timeout' option only starts AFTER the user grants permission.
             const safetyTimeout = setTimeout(() => {
-                reject(new Error("Location request timed out. Please ensure you have granted permission and have a clear view of the sky or a strong Wi-Fi signal."));
-            }, 120000);
+                reject(new Error("Location request timed out at the application level."));
+            }, timeout + 5000);
 
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
                     clearTimeout(safetyTimeout);
+                    // Update application cache
+                    lastSuccessfulPosition = pos;
+                    lastFetchTime = Date.now();
                     resolve(pos);
                 },
                 (err) => {
                     clearTimeout(safetyTimeout);
+                    // Standard GeolocationPositionError properties are not enumerable
+                    const errorDetails = {
+                        code: err.code,
+                        message: err.message,
+                        PERMISSION_DENIED: err.code === 1,
+                        POSITION_UNAVAILABLE: err.code === 2,
+                        TIMEOUT: err.code === 3
+                    };
+                    console.warn(`Geolocation attempt failed (High Accuracy: ${highAccuracy}):`, errorDetails);
                     reject(err);
                 },
                 {
                     enableHighAccuracy: highAccuracy,
                     timeout: timeout, 
-                    maximumAge: highAccuracy ? 0 : 60000 // Force fresh for high accuracy, allow 1m old for low
+                    maximumAge: maxAge
                 }
             );
         });
     };
 
     try {
-        // Attempt 1: High accuracy, fresh
-        return await getLocation(true, 20000);
+        // Attempt 1: High accuracy, allow up to 5-minute cache for speed and reliability
+        console.log("Location Attempt 1: High accuracy (5-minute cache allowed)");
+        return await getLocation(true, 15000, 300000); // 15s timeout, 5m cache
     } catch (e: any) {
-        // If permission was denied, don't bother retrying
-        if (e.code === 1) {
+        if (e.code === 1) { // PERMISSION_DENIED
             const err = new Error("Location access was denied. Please check your browser settings and allow location access for this site.");
             (err as any).code = 1;
             throw err;
         }
         
-        // Fallback to low accuracy
+        console.warn("Location Attempt 1 failed, trying Attempt 2: Fresh high accuracy scan");
+
+        // Attempt 2: High accuracy, fresh (10s cache)
         try {
-            return await getLocation(false, 20000);
-        } catch (e2: any) {
-            if (e2.code === 1) throw e2;
-            
-            // Final attempt: allow any cached position, very long timeout
+            console.log("Location Attempt 2: High accuracy (10s cache)");
+            return await getLocation(true, 30000, 10000); // 30s timeout, 10s cache
+        } catch (e_fresh: any) {
+            console.warn("Location Attempt 2 failed, trying Attempt 3: Low accuracy fresh");
+
+            // Attempt 3: Low accuracy but fresh
             try {
-                return await new Promise((resolve, reject) => {
-                    navigator.geolocation.getCurrentPosition(resolve, reject, {
-                        enableHighAccuracy: false,
-                        timeout: 30000,
-                        maximumAge: Infinity
+                console.log("Location Attempt 3: Low accuracy (Fresh scan)");
+                return await getLocation(false, 20000, 0); // 20s timeout, 0 cache
+            } catch (e2: any) {
+                if (e2.code === 1) throw e2;
+                
+                console.warn("Location Attempt 3 failed, trying Attempt 4: ANY cached position");
+
+                // Final attempt: allow any cached position from any time
+                try {
+                    console.log("Location Attempt 4: Any cached position (Infinity)");
+                    const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+                        navigator.geolocation.getCurrentPosition(resolve, reject, {
+                            enableHighAccuracy: false,
+                            timeout: 10000, // Short timeout for final attempt
+                            maximumAge: Infinity // Use any cached position
+                        });
                     });
-                });
-            } catch (e3: any) {
-                const finalErr = new Error("Could not determine location after multiple attempts. Please ensure you are in an area with good signal or enter coordinates manually.");
-                (finalErr as any).code = e3.code || 0;
-                throw finalErr;
+                    
+                    // Update application cache if successful
+                    lastSuccessfulPosition = pos;
+                    lastFetchTime = Date.now();
+                    return pos;
+                } catch (e3: any) {
+                    // Final safety net: if we have a successful fetch from the last 15 minutes, use it
+                    if (lastSuccessfulPosition && (Date.now() - lastFetchTime < 900000)) { // 15 minutes
+                        console.warn("All new location attempts failed, but found a valid application cache (less than 15m old). Using it.");
+                        return lastSuccessfulPosition;
+                    }
+
+                    const errorDetails = {
+                        code: e3?.code,
+                        message: e3?.message,
+                        errorType: e3?.constructor?.name
+                    };
+                    console.error("All location attempts failed. Final error details:", errorDetails);
+                    
+                    const finalErr = new Error("Could not determine location. This usually happens due to poor GPS signal indoors or location being disabled on your device. Please try refreshing the page.");
+                    (finalErr as any).code = e3?.code || 0;
+                    throw finalErr;
+                }
             }
         }
     }
@@ -91,7 +146,7 @@ export const getCurrentLocation = async (): Promise<GeolocationPosition> => {
 export const verifyLocation = async (
     targetLat: number, 
     targetLon: number, 
-    radiusMeters: number = 500
+    radiusMeters: number = 2000
 ): Promise<boolean> => {
     try {
         const position = await getCurrentLocation();
@@ -119,7 +174,7 @@ export const verifyLocation = async (
                     message = "Location information is unavailable. Please ensure your device's location services (GPS) are turned on.";
                     break;
                 case 3: // TIMEOUT
-                    message = "The request to get your location timed out. Please try again in a more open area.";
+                    message = "The request to get your location timed out. This often happens due to weak GPS signal or being indoors. Please try moving slightly, ensure your GPS is ON, and try once more.";
                     break;
             }
         } else if (error.message) {

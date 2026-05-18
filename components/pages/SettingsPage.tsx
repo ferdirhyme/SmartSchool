@@ -16,8 +16,16 @@ import {
     notificationsSqlScript, 
     feesSqlScript, 
     feedbackSqlScript, 
-    nextGenFeaturesSqlScript 
+    nextGenFeaturesSqlScript,
+    lessonNotesSqlScript,
+    storageFixSqlScript,
+    schemaFetcherSqlScript
 } from '../../lib/db-scripts.ts';
+import { aiService } from '../../services/ai.service.ts';
+import { Database, Zap, RefreshCw, Copy, Check, Terminal, FileCode } from 'lucide-react';
+import { schoolService } from '../../modules/school/school.service.ts';
+
+import { MASTER_SCHEMA_SQL } from '../../lib/master-schema.ts';
 
 // --- Page Logic ---
 
@@ -48,6 +56,210 @@ import {
 
 
 // --- Components for Settings Page ---
+const AISMigrationGenerator: React.FC = () => {
+    const [requirements, setRequirements] = useState('');
+    const [schema, setSchema] = useState<any>(null);
+    const [isFetchingSchema, setIsFetchingSchema] = useState(false);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [generatedSql, setGeneratedSql] = useState('');
+    const [copied, setCopied] = useState(false);
+    const [useComparison, setUseComparison] = useState(false);
+
+    const handleFetchSchema = async () => {
+        setIsFetchingSchema(true);
+        try {
+            const data = await schoolService.fetchDatabaseSchema();
+            setSchema(data);
+        } catch (err) {
+            console.error("Failed to fetch schema:", err);
+            alert("Please ensure you have run the 'Schema Fetcher Function' script first.");
+        } finally {
+            setIsFetchingSchema(false);
+        }
+    };
+
+    const handleGenerate = async () => {
+        if (!schema) {
+            alert("Please fetch the current schema first.");
+            return;
+        }
+        if (!requirements.trim()) {
+            alert("Please enter development requirements.");
+            return;
+        }
+
+        setIsGenerating(true);
+        try {
+            const result = await aiService.generateMigration(
+                schema, 
+                requirements, 
+                useComparison ? MASTER_SCHEMA_SQL : undefined
+            );
+            setGeneratedSql(result);
+        } catch (err) {
+            console.error("AI Generation failed:", err);
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    const handleCopyPrompt = () => {
+        const prompt = `I need a safe SQL migration for the following requirements:
+"${requirements}"
+
+STRICT RULES:
+- No destructive changes (no DROP)
+- No duplicate tables, columns, indexes, or policies
+- Use IF NOT EXISTS / IF EXISTS
+- Use ALTER TABLE for updates
+- Check pg_policies before creating policies
+- All SQL must be idempotent
+
+CURRENT PRODUCTION SCHEMA:
+${JSON.stringify(schema, null, 2)}
+${useComparison ? `\nTARGET MASTER SCHEMA (Repository Truth):\n${MASTER_SCHEMA_SQL}` : ''}
+`;
+        navigator.clipboard.writeText(prompt);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    const handleCopySql = () => {
+        navigator.clipboard.writeText(generatedSql);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    return (
+        <div className="bg-white dark:bg-gray-800 rounded-3xl border border-gray-100 dark:border-gray-700 overflow-hidden shadow-sm pt-4 mb-6">
+            <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-brand-50/30 dark:bg-brand-900/10 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-brand-100 dark:bg-brand-900/30 text-brand-600 rounded-2xl flex items-center justify-center">
+                        <Zap className="w-6 h-6" />
+                    </div>
+                    <div>
+                        <h3 className="text-lg font-black text-gray-900 dark:text-white">AI Schema Migration Generator</h3>
+                        <p className="text-xs text-brand-600 font-bold uppercase tracking-wider">Super Admin Tool</p>
+                    </div>
+                </div>
+                {schema && (
+                    <button 
+                        onClick={handleCopyPrompt}
+                        className="px-4 py-2 bg-brand-600 text-white rounded-xl text-xs font-bold hover:bg-brand-700 transition-all flex items-center gap-2"
+                    >
+                        {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                        {copied ? 'Prompt Copied!' : 'Copy Prompt for AI'}
+                    </button>
+                )}
+            </div>
+
+            <div className="p-6 space-y-6">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-400 uppercase mb-2">1. Current Production Schema</label>
+                            <button 
+                                onClick={handleFetchSchema}
+                                disabled={isFetchingSchema}
+                                className="w-full py-4 px-6 bg-gray-100 dark:bg-gray-900 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700 flex flex-col items-center justify-center hover:border-brand-500 hover:bg-white dark:hover:bg-gray-800 transition-all group"
+                            >
+                                {isFetchingSchema ? (
+                                    <RefreshCw className="w-6 h-6 text-brand-600 animate-spin" />
+                                ) : schema ? (
+                                    <div className="flex flex-col items-center">
+                                        <Database className="w-8 h-8 text-green-600 mb-2" />
+                                        <p className="text-sm font-bold text-gray-900 dark:text-white">Schema Fetched Successfully</p>
+                                        <p className="text-[10px] text-gray-500 uppercase">{schema.tables?.length || 0} Tables • {schema.policies?.length || 0} Policies</p>
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-col items-center">
+                                        <RefreshCw className="w-8 h-8 text-gray-400 mb-2 group-hover:text-brand-600 group-hover:rotate-180 transition-all duration-500" />
+                                        <p className="text-sm font-bold text-gray-500 group-hover:text-brand-600">Scan Production Database</p>
+                                    </div>
+                                )}
+                            </button>
+                        </div>
+
+                        <div>
+                            <div className="flex items-center justify-between mb-2">
+                                <label className="block text-xs font-bold text-gray-400 uppercase">2. Dev Requirements</label>
+                                <button 
+                                    onClick={() => {
+                                        setUseComparison(!useComparison);
+                                        if (!useComparison) {
+                                            setRequirements("Please analyze the differences between the current live production schema and the repository's MASTER_SCHEMA_SQL. Generate a safe SQL migration to synchronize the production database so it perfectly matches the repository schema (adding missing tables, columns, or policies).");
+                                        }
+                                    }}
+                                    className={`text-[10px] font-black px-2 py-1 rounded-lg border transition-all flex items-center gap-1 ${useComparison ? 'bg-brand-50 border-brand-200 text-brand-600' : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-brand-300 hover:text-brand-600'}`}
+                                >
+                                    <RefreshCw className={`w-3 h-3 ${useComparison ? 'animate-spin-slow' : ''}`} />
+                                    {useComparison ? 'SYNC MODE: ON' : 'SYNC WITH MASTER SQL'}
+                                </button>
+                            </div>
+                            <textarea 
+                                value={requirements}
+                                onChange={(e) => setRequirements(e.target.value)}
+                                placeholder="Example: Add a 'biography' column to teachers table. Enable RLS and add policy for self-update."
+                                className="w-full h-32 p-4 bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700 rounded-2xl text-sm focus:ring-2 focus:ring-brand-500 outline-none resize-none transition-all"
+                            />
+                        </div>
+
+                        <button 
+                            onClick={handleGenerate}
+                            disabled={isGenerating || !schema || !requirements.trim()}
+                            className="w-full py-4 bg-brand-600 hover:bg-brand-700 disabled:bg-gray-300 disabled:dark:bg-gray-800 text-white font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20 active:scale-[0.98] transition-all"
+                        >
+                            {isGenerating ? (
+                                <RefreshCw className="w-5 h-5 animate-spin" />
+                            ) : (
+                                <Zap className="w-5 h-5" />
+                            )}
+                            GENERATE SAFE MIGRATION
+                        </button>
+                    </div>
+
+                    <div className="flex flex-col h-full min-h-[300px]">
+                        <div className="flex items-center justify-between mb-2">
+                            <label className="block text-xs font-bold text-gray-400 uppercase">3. Safe SQL Migration</label>
+                            {generatedSql && (
+                                <button 
+                                    onClick={handleCopySql}
+                                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-bold text-brand-600"
+                                >
+                                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                    {copied ? 'Copied!' : 'Copy SQL'}
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex-grow bg-gray-950 rounded-2xl border border-gray-800 overflow-hidden relative">
+                            <div className="absolute top-0 right-0 p-3 opacity-20 pointer-events-none">
+                                <FileCode className="w-12 h-12 text-blue-400" />
+                            </div>
+                            <pre className="p-4 text-[11px] font-mono text-blue-400/90 whitespace-pre-wrap h-full overflow-y-auto">
+                                {generatedSql || (
+                                    <span className="text-gray-600 italic">Generate a migration to see the SQL output here...</span>
+                                )}
+                            </pre>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-2xl flex gap-3">
+                    <Terminal className="w-5 h-5 text-amber-600 shrink-0" />
+                    <div className="text-[11px] text-amber-800 dark:text-amber-400 space-y-1">
+                        <p className="font-bold uppercase tracking-wider">Safety Protocol:</p>
+                        <ul className="list-disc ml-4 space-y-1 opacity-80">
+                            <li>All migrations use <code className="bg-amber-100 dark:bg-amber-800 px-1 rounded">IF NOT EXISTS</code> to prevent errors.</li>
+                            <li>Destructive commands (<code className="bg-amber-100 dark:bg-amber-800 px-1 rounded">DROP</code>) are strictly forbidden.</li>
+                            <li>Review the generated SQL before running it in the Supabase SQL Editor.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 interface ScriptBlockProps {
     title: string;
     warning: React.ReactNode;
@@ -200,6 +412,8 @@ const AdvancedSettings: React.FC = () => {
 
     return (
         <div className="space-y-8">
+            <AISMigrationGenerator />
+
             {message && (
                 <div className={`p-4 rounded-md mb-6 ${message.type === 'success' ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200' : 'bg-red-100 dark:bg-red-900 text-red-800 dark:text-red-200'}`}>
                     {message.text}
@@ -213,6 +427,20 @@ const AdvancedSettings: React.FC = () => {
                     isRunning={isScriptRunning}
                 />
             )}
+
+            <ScriptBlock
+                title="0. Schema Fetcher Function"
+                isDestructive={false}
+                warning={
+                     <p>
+                        Run this <strong>once</strong> to enable the AI Migration Generator to scan your database structure.
+                    </p>
+                }
+                instructions={commonInstructions}
+                script={schemaFetcherSqlScript}
+                onRun={(script) => triggerRun(script, false)}
+                isRunning={isScriptRunning}
+            />
 
             <ScriptBlock
                 title="1. Core Database & Security Patch"
@@ -313,7 +541,35 @@ const AdvancedSettings: React.FC = () => {
             />
 
             <ScriptBlock
-                title="7. Reset Student Assessments Table (Destructive)"
+                title="8. Lesson Notes Fix (Typo & Schema)"
+                isDestructive={false}
+                warning={
+                     <p>
+                        Run this script to fix the <strong>"lessonn_notes"</strong> typo and ensure the lesson notes table has all required columns.
+                    </p>
+                }
+                instructions={commonInstructions}
+                script={lessonNotesSqlScript}
+                onRun={(script) => triggerRun(script, false)}
+                isRunning={isScriptRunning}
+            />
+
+            <ScriptBlock
+                title="10. Storage Fix (Buckets & Policies)"
+                isDestructive={false}
+                warning={
+                     <p>
+                        Run this script to ensure the <strong>"attachments"</strong> and <strong>"avatars"</strong> buckets exist and have correct access policies.
+                    </p>
+                }
+                instructions={commonInstructions}
+                script={storageFixSqlScript}
+                onRun={(script) => triggerRun(script, false)}
+                isRunning={isScriptRunning}
+            />
+
+            <ScriptBlock
+                title="11. Reset Student Assessments Table (Destructive)"
                 isDestructive={true}
                 warning={
                     <>
@@ -334,7 +590,7 @@ const AdvancedSettings: React.FC = () => {
             />
 
             <ScriptBlock
-                title="8. Ghanaian School Optimization"
+                title="12. Ghanaian School Optimization"
                 isDestructive={false}
                 warning={
                      <p>
@@ -348,7 +604,7 @@ const AdvancedSettings: React.FC = () => {
             />
 
             <ScriptBlock
-                title="9. EMERGENCY: Security Audit & Role Cleanup"
+                title="13. EMERGENCY: Security Audit & Role Cleanup"
                 isDestructive={true}
                 warning={
                     <div className="space-y-3">

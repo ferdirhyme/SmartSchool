@@ -24,5 +24,13 @@ export const aiService = {
 
     async generateSchemeOfLearning(_request: SchemeOfLearningRequest): Promise<any> {
         throw new Error("AI Scheme of Learning generation is currently disabled.");
+    },
+
+    async generateMigration(schema: any, requirements: string, targetSchema?: string): Promise<string> {
+        // In a real app, this would call a Gemini model
+        // For this demo/tool, we'll return a prompt that the user can copy
+        // Or we could actually perform the call if GEMINI_API_KEY is available.
+        console.log("Generating migration for:", requirements, !!targetSchema);
+        return `-- Migration generated for: ${requirements}\n-- Comparison with Repository SQL: ${targetSchema ? 'Enabled' : 'Disabled'}\n-- Please run this in your SQL Editor\n\nBEGIN;\n\n-- AI will generate specific SQL here\n\nCOMMIT;`;
     }
 };

@@ -938,3 +938,172 @@ ALTER TABLE public.scholarships ENABLE ROW LEVEL SECURITY;
 GRANT ALL ON TABLE public.expenses TO authenticated, service_role;
 GRANT ALL ON TABLE public.scholarships TO authenticated, service_role;
 `.trim();
+
+export const lessonNotesSqlScript = `
+-- Fix Lesson Notes Table Typo and Schema
+-- 1. Rename misspelled table if it exists
+DO $$ 
+BEGIN
+    IF EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'lessonn_notes') AND 
+       NOT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'lesson_notes') THEN
+        ALTER TABLE public.lessonn_notes RENAME TO lesson_notes;
+    END IF;
+END $$;
+
+-- 2. Create Lesson Notes Table if not exists
+CREATE TABLE IF NOT EXISTS public.lesson_notes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id UUID REFERENCES public.schools(id) ON DELETE CASCADE,
+    teacher_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    week_ending DATE NOT NULL,
+    subject TEXT NOT NULL,
+    class_name TEXT NOT NULL,
+    term TEXT NOT NULL,
+    strand TEXT NOT NULL,
+    sub_strand TEXT,
+    reference TEXT,
+    rpk TEXT,
+    core_competencies TEXT[],
+    learning_indicators TEXT NOT NULL,
+    tlms TEXT[],
+    introduction TEXT,
+    presentation_steps JSONB NOT NULL DEFAULT '[]',
+    conclusion TEXT,
+    evaluation TEXT,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    headteacher_remarks TEXT,
+    approved_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    file_url TEXT
+);
+
+-- 3. Ensure all columns exist
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS strand TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS sub_strand TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS term TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS reference TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS days TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS duration TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS file_url TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS key_words TEXT[];
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS methodology TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS equipment TEXT[];
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS topic TEXT;
+ALTER TABLE public.lesson_notes ADD COLUMN IF NOT EXISTS extra_details JSONB DEFAULT '{}';
+
+-- 4. Enable RLS
+ALTER TABLE public.lesson_notes ENABLE ROW LEVEL SECURITY;
+
+-- 5. Policies
+DROP POLICY IF EXISTS "Teachers can manage own lesson notes" ON public.lesson_notes;
+CREATE POLICY "Teachers can manage own lesson notes" ON public.lesson_notes
+    FOR ALL USING (teacher_id = auth.uid());
+
+DROP POLICY IF EXISTS "Headteachers can view and update school lesson notes" ON public.lesson_notes;
+CREATE POLICY "Headteachers can view and update school lesson notes" ON public.lesson_notes
+    FOR ALL USING (
+        (public.get_auth_role() = 'Headteacher' AND school_id = public.get_my_school_id()) OR
+        public.get_auth_role() = 'Admin'
+    );
+
+DROP POLICY IF EXISTS "Admins can view all lesson notes" ON public.lesson_notes;
+CREATE POLICY "Admins can view all lesson notes" ON public.lesson_notes
+    FOR SELECT USING (public.get_auth_role() = 'Admin');
+
+-- 6. Grant Permissions
+GRANT ALL ON TABLE public.lesson_notes TO authenticated, service_role;
+`.trim();
+
+export const storageFixSqlScript = `
+-- Fix Storage Buckets and Policies
+-- 1. Create buckets if they don't exist
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true), ('attachments', 'attachments', true)
+ON CONFLICT (id) DO UPDATE SET public = excluded.public;
+
+-- 2. Set up RLS Policies
+
+-- Allow public access to view files
+DROP POLICY IF EXISTS "Public Access" ON storage.objects;
+CREATE POLICY "Public Access" ON storage.objects
+FOR SELECT USING (bucket_id IN ('avatars', 'attachments'));
+
+-- Allow authenticated users to upload files
+DROP POLICY IF EXISTS "Authenticated Upload" ON storage.objects;
+CREATE POLICY "Authenticated Upload" ON storage.objects
+FOR INSERT WITH CHECK (
+    bucket_id IN ('avatars', 'attachments') AND 
+    auth.role() = 'authenticated'
+);
+
+-- Allow users to update their own files
+DROP POLICY IF EXISTS "User Update Access" ON storage.objects;
+CREATE POLICY "User Update Access" ON storage.objects
+FOR UPDATE USING (
+    bucket_id IN ('avatars', 'attachments') AND 
+    (auth.uid() = owner OR EXISTS (
+        SELECT 1 FROM public.profiles 
+        WHERE id = auth.uid() AND role = 'Admin'
+    ))
+);
+
+-- Allow users to delete their own files
+DROP POLICY IF EXISTS "User Delete Access" ON storage.objects;
+CREATE POLICY "User Delete Access" ON storage.objects
+FOR DELETE USING (
+    bucket_id IN ('avatars', 'attachments') AND 
+    (auth.uid() = owner OR EXISTS (
+        SELECT 1 FROM public.profiles 
+        WHERE id = auth.uid() AND role = 'Admin'
+    ))
+);
+`.trim();
+
+export const schemaFetcherSqlScript = `
+-- Function to fetch production schema as JSON
+CREATE OR REPLACE FUNCTION get_production_schema()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    schema_data JSONB;
+BEGIN
+    SELECT jsonb_build_object(
+        'tables', (
+            SELECT jsonb_agg(jsonb_build_object(
+                'table_name', t.table_name,
+                'columns', (
+                    SELECT jsonb_agg(jsonb_build_object(
+                        'column_name', c.column_name,
+                        'data_type', c.data_type,
+                        'is_nullable', c.is_nullable,
+                        'column_default', c.column_default
+                    ))
+                    FROM information_schema.columns c
+                    WHERE c.table_name = t.table_name AND c.table_schema = 'public'
+                )
+            ))
+            FROM information_schema.tables t
+            WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+        ),
+        'policies', (
+            SELECT jsonb_agg(jsonb_build_object(
+                'tablename', p.tablename,
+                'policyname', p.policyname,
+                'roles', p.roles,
+                'cmd', p.cmd,
+                'qual', p.qual,
+                'with_check', p.with_check
+            ))
+            FROM pg_policies p
+            WHERE p.schemaname = 'public'
+        )
+    ) INTO schema_data;
+    
+    RETURN schema_data;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION get_production_schema() TO authenticated, service_role;
+`.trim();

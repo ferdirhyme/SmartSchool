@@ -1,6 +1,6 @@
 
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../lib/supabase.ts';
 import { Profile, Announcement, SchoolSettings } from '../../types.ts';
 import { useSettings } from '../../contexts/SettingsContext.tsx';
@@ -8,7 +8,8 @@ import { UsersIcon, BriefcaseIcon, UserCheckIcon, CashIcon } from '../icons/Widg
 import { AddStudentIcon, AddTeacherIcon } from '../icons/ActionIcons.tsx';
 import { AnnouncementIcon, ReportsIcon, FeesIcon } from '../icons/NavIcons.tsx';
 import { EnrollmentChart, AttendanceDonutChart, FinancialGrowthChart } from '../DashboardCharts.tsx';
-import { Calendar, Save, Loader2, Sparkles, AlertCircle } from 'lucide-react';
+import { Calendar, Save, Loader2, Sparkles, AlertCircle, MapPin, UserCheck, CheckCircle, LogOut, Info, CloudSync } from 'lucide-react';
+import { verifyLocation } from '../../lib/location.ts';
 
 interface HeadteacherDashboardHomeProps {
   profile: Profile;
@@ -53,6 +54,13 @@ const HeadteacherDashboardHome: React.FC<HeadteacherDashboardHomeProps> = ({ pro
     const [feeRecoveryPerc, setFeeRecoveryPerc] = useState(0);
     const [isLoading, setIsLoading] = useState(true);
 
+    // Staff Attendance State
+    const [teacherId, setTeacherId] = useState<string | null>(null);
+    const [staffAttendance, setStaffAttendance] = useState<any>(null);
+    const [isCheckingIn, setIsCheckingIn] = useState(false);
+    const [locationError, setLocationError] = useState<string | null>(null);
+    const [lastRefreshTime, setLastRefreshTime] = useState(Date.now());
+
     // Session Management State
     const [isEditingSession, setIsEditingSession] = useState(false);
     const [sessionForm, setSessionForm] = useState({
@@ -96,43 +104,96 @@ const HeadteacherDashboardHome: React.FC<HeadteacherDashboardHomeProps> = ({ pro
         }
     };
 
-    useEffect(() => {
-        const fetchDashboardData = async () => {
-            setIsLoading(true);
-            try {
-                const today = new Date();
-                const todayStr = today.toISOString().split('T')[0];
-                const currentYear = today.getFullYear();
+    const fetchDashboardData = useCallback(async () => {
+        setIsLoading(true);
+        try {
+            const now = new Date();
+            const todayStr = now.toLocaleDateString('en-CA');
+            const currentYear = now.getFullYear();
 
-                // Calculate date 6 months ago for trends
-                const sixMonthsAgo = new Date();
-                sixMonthsAgo.setMonth(today.getMonth() - 5);
-                sixMonthsAgo.setDate(1);
-                const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
+            // 1. Fetch Teacher ID for the Headteacher (they are also staff)
+            let currentTeacherId = null;
+            const { data: teacherIdData, error: rpcError } = await supabase
+                .rpc('get_teacher_id_by_auth_email');
+            
+            if (rpcError) {
+                const { data: { session: authSession } } = await supabase.auth.getSession();
+                if (authSession?.user?.email) {
+                    const { data: teacherRecord } = await supabase
+                        .from('teachers')
+                        .select('id')
+                        .eq('email', authSession.user.email)
+                        .maybeSingle();
+                    if (teacherRecord) {
+                        currentTeacherId = teacherRecord.id;
+                    }
+                }
+            } else {
+                currentTeacherId = teacherIdData;
+            }
+            
+            if (currentTeacherId === 'null') currentTeacherId = null;
+            setTeacherId(currentTeacherId);
 
-                const [
-                    { count: studentCount }, 
-                    { count: teacherCount }, 
-                    { count: presentStudents }, 
-                    { data: feeData },
-                    { data: announcementData },
-                    profilesRes,
-                    pendingSchemesRes,
-                    { data: allStudentsDates },
-                    { data: feeTrendData },
-                    { data: feeTypes }
-                ] = await Promise.all([
-                    supabase.from('students').select('*', { count: 'exact', head: true }),
-                    supabase.from('teachers').select('*', { count: 'exact', head: true }),
-                    supabase.from('student_attendance').select('*', { count: 'exact', head: true }).eq('attendance_date', todayStr).in('status', ['Present', 'Late']),
-                    supabase.from('fee_payments').select('amount_paid').gte('payment_date', `${currentYear}-01-01`).lte('payment_date', `${currentYear}-12-31`),
-                    supabase.from('announcements').select('*').gte('expiry_date', todayStr).order('created_at', { ascending: false }).limit(4),
-                    supabase.from('profiles').select('*').eq('school_id', profile.school_id).eq('role', 'Teacher').eq('is_onboarded', true),
-                    supabase.from('schemes_of_learning').select('*', { count: 'exact', head: true }).eq('school_id', profile.school_id).eq('status', 'pending'),
-                    supabase.from('students').select('created_at').gte('created_at', sixMonthsAgoStr),
-                    supabase.from('fee_payments').select('amount_paid, payment_date').gte('payment_date', sixMonthsAgoStr),
-                    supabase.from('fee_types').select('default_amount')
-                ]);
+            // 2. Fetch Todays Staff Attendance if teacher record exists
+            if (currentTeacherId) {
+                const { data: attendanceData } = await supabase
+                    .from('teacher_attendance')
+                    .select('*')
+                    .eq('teacher_id', currentTeacherId)
+                    .eq('attendance_date', todayStr)
+                    .maybeSingle();
+                setStaffAttendance(attendanceData);
+
+                // Forced Auto-Checkout: Close any unclosed sessions from prior days
+                try {
+                    const { data: staleRecords } = await supabase
+                        .from('teacher_attendance')
+                        .select('id')
+                        .eq('teacher_id', currentTeacherId)
+                        .lt('attendance_date', todayStr)
+                        .is('check_out_time', null);
+
+                    if (staleRecords && staleRecords.length > 0) {
+                        await supabase
+                            .from('teacher_attendance')
+                            .update({ check_out_time: '17:00:00' })
+                            .in('id', staleRecords.map(r => r.id));
+                    }
+                } catch (e) {
+                    console.warn("Auto-checkout cleanup failed:", e);
+                }
+            }
+
+            // Calculate date 6 months ago for trends
+            const sixMonthsAgo = new Date();
+            sixMonthsAgo.setMonth(now.getMonth() - 5);
+            sixMonthsAgo.setDate(1);
+            const sixMonthsAgoStr = sixMonthsAgo.toISOString().split('T')[0];
+
+            const [
+                { count: studentCount }, 
+                { count: teacherCount }, 
+                { count: presentStudents }, 
+                { data: feeData },
+                { data: announcementData },
+                profilesRes,
+                pendingSchemesRes,
+                { data: allStudentsDates },
+                { data: feeTrendData },
+                { data: feeTypes }
+            ] = await Promise.all([
+                supabase.from('students').select('*', { count: 'exact', head: true }),
+                supabase.from('teachers').select('*', { count: 'exact', head: true }),
+                supabase.from('student_attendance').select('*', { count: 'exact', head: true }).eq('attendance_date', todayStr).in('status', ['Present', 'Late']),
+                supabase.from('fee_payments').select('amount_paid').gte('payment_date', `${currentYear}-01-01`).lte('payment_date', `${currentYear}-12-31`),
+                supabase.from('announcements').select('*').gte('expiry_date', todayStr).order('created_at', { ascending: false }).limit(4),
+                supabase.from('profiles').select('*').eq('school_id', profile.school_id).eq('role', 'Teacher').eq('is_onboarded', true),
+                supabase.from('schemes_of_learning').select('*', { count: 'exact', head: true }).eq('school_id', profile.school_id).eq('status', 'pending'),
+                supabase.from('students').select('created_at').gte('created_at', sixMonthsAgoStr),
+                supabase.from('fee_payments').select('amount_paid, payment_date').gte('payment_date', sixMonthsAgoStr),
+                supabase.from('fee_types').select('default_amount')
+            ]);
 
                 // Find profiles that don't have a record in the teachers table
                 const { data: teacherRecords } = await supabase.from('teachers').select('id').eq('school_id', profile.school_id);
@@ -225,16 +286,219 @@ const HeadteacherDashboardHome: React.FC<HeadteacherDashboardHomeProps> = ({ pro
                 console.error("Failed to fetch dashboard data:", error);
             } finally {
                 setIsLoading(false);
+                setLastRefreshTime(Date.now());
             }
-        };
-
-        fetchDashboardData();
     }, [profile.school_id]);
+
+    useEffect(() => {
+        fetchDashboardData();
+    }, [fetchDashboardData]);
+
+    const handleManualRefresh = () => {
+        fetchDashboardData();
+    };
+
+    const handleStaffCheckIn = async (bypassLocation = false) => {
+        if (!teacherId || !profile.school_id) {
+            alert("Your account is not linked to a staff record.");
+            return;
+        }
+
+        setIsCheckingIn(true);
+        setLocationError(null);
+        try {
+            const now = new Date();
+            const todayStr = now.toLocaleDateString('en-CA');
+            const nowTime = now.toTimeString().split(' ')[0];
+
+            // Fetch latest school settings for location
+            const { data: latestSettings } = await supabase
+                .from('school_settings')
+                .select('school_latitude, school_longitude')
+                .eq('id', profile.school_id)
+                .single();
+
+            const schoolLat = parseFloat(latestSettings?.school_latitude);
+            const schoolLng = parseFloat(latestSettings?.school_longitude);
+
+            if (!bypassLocation) {
+                if (!Number.isFinite(schoolLat) || !Number.isFinite(schoolLng)) {
+                    setLocationError("School location not set. Please set it in Settings.");
+                    setIsCheckingIn(false);
+                    return;
+                }
+                try {
+                    await verifyLocation(schoolLat, schoolLng, 300);
+                } catch (e: any) {
+                    setLocationError(e.message);
+                    setIsCheckingIn(false);
+                    return;
+                }
+            }
+
+            const { data, error } = await supabase
+                .from('teacher_attendance')
+                .upsert({
+                    teacher_id: teacherId,
+                    school_id: profile.school_id,
+                    attendance_date: todayStr,
+                    check_in_time: nowTime,
+                    status: 'Present'
+                }, { onConflict: 'teacher_id,attendance_date' })
+                .select()
+                .single();
+
+            if (error) throw error;
+            if (data) setStaffAttendance(data);
+        } catch (err: any) {
+            console.error("Check-in error:", err);
+            alert(err.message || "Failed to check in.");
+        } finally {
+            setIsCheckingIn(false);
+        }
+    };
+
+    const handleStaffCheckOut = async (bypassLocation = false) => {
+        if (!staffAttendance?.id) return;
+
+        setIsCheckingIn(true);
+        try {
+            const now = new Date();
+            const nowTime = now.toTimeString().split(' ')[0];
+
+            // Optional location check for checkout too
+            const { data: latestSettings } = await supabase
+                .from('school_settings')
+                .select('school_latitude, school_longitude')
+                .eq('id', profile.school_id)
+                .single();
+
+            const schoolLat = parseFloat(latestSettings?.school_latitude);
+            const schoolLng = parseFloat(latestSettings?.school_longitude);
+
+            if (!bypassLocation && Number.isFinite(schoolLat) && Number.isFinite(schoolLng)) {
+                 try {
+                     await verifyLocation(schoolLat, schoolLng, 300);
+                 } catch (e: any) {
+                     setLocationError(e.message);
+                     setIsCheckingIn(false);
+                     return;
+                 }
+            }
+
+            const { data, error } = await supabase
+                .from('teacher_attendance')
+                .update({ check_out_time: nowTime })
+                .eq('id', staffAttendance.id)
+                .select()
+                .single();
+
+            if (error) throw error;
+            if (data) setStaffAttendance(data);
+        } catch (err: any) {
+            console.error("Check-out error:", err);
+            alert(err.message || "Failed to check out.");
+        } finally {
+            setIsCheckingIn(false);
+        }
+    };
 
     return (
         <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome, {profile.full_name}!</h1>
-            <p className="text-gray-600 dark:text-gray-300 mb-8">Here's a snapshot of your school's performance today.</p>
+            <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-2">Welcome, {profile.full_name}!</h1>
+                    <p className="text-gray-600 dark:text-gray-300">Here's a snapshot of your school's performance today.</p>
+                </div>
+                <div className="flex items-center gap-3">
+                    <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest hidden sm:block">
+                        Last updated: {new Date(lastRefreshTime).toLocaleTimeString()}
+                    </p>
+                    <button 
+                        onClick={handleManualRefresh}
+                        disabled={isLoading}
+                        className="p-2.5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-all text-gray-500 dark:text-gray-400 shadow-sm disabled:opacity-50"
+                        title="Refresh data"
+                    >
+                        <CloudSync className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Staff Attendance Card (For Headteacher too) */}
+            {teacherId && (
+                <div className="mb-8 p-6 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-3xl shadow-sm hover:shadow-md transition-all">
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                        <div className="flex items-center gap-5">
+                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-colors ${
+                                staffAttendance?.check_out_time 
+                                ? 'bg-gray-50 dark:bg-gray-700 border-gray-100 dark:border-gray-600 text-gray-400' 
+                                : staffAttendance 
+                                ? 'bg-green-50 dark:bg-green-900/30 border-green-100 dark:border-green-800/50 text-green-600 dark:text-green-400' 
+                                : 'bg-brand-50 dark:bg-brand-900/30 border-brand-100 dark:border-brand-800/50 text-brand-600 dark:text-brand-400'
+                            }`}>
+                                {staffAttendance?.check_out_time ? <CheckCircle className="w-7 h-7" /> : <UserCheck className="w-7 h-7" />}
+                            </div>
+                            <div>
+                                <h3 className="text-sm font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1">Your Attendance</h3>
+                                {staffAttendance ? (
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[10px] font-black bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300 px-2 py-0.5 rounded-full uppercase">Checked In</span>
+                                            <span className="text-xl font-black text-gray-900 dark:text-white">{staffAttendance.check_in_time}</span>
+                                        </div>
+                                        {staffAttendance.check_out_time && (
+                                            <div className="flex items-center gap-1.5 border-l border-gray-200 dark:border-gray-700 pl-4">
+                                                <span className="text-[10px] font-black bg-gray-100 dark:bg-gray-700 text-gray-500 px-2 py-0.5 rounded-full uppercase">Checked Out</span>
+                                                <span className="text-xl font-black text-gray-900 dark:text-white">{staffAttendance.check_out_time}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <p className="text-xl font-black text-gray-900 dark:text-white">Not checked in today</p>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            {locationError && (
+                                <div className="px-4 py-3 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800/50 rounded-xl flex items-center gap-3 animate-pulse">
+                                    <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
+                                    <p className="text-xs font-bold text-red-700 dark:text-red-400 leading-tight">
+                                        {locationError}
+                                        <button onClick={() => setLocationError(null)} className="ml-2 underline hover:no-underline">Dismiss</button>
+                                    </p>
+                                </div>
+                            )}
+                            
+                            {!staffAttendance ? (
+                                <button 
+                                    onClick={() => handleStaffCheckIn()}
+                                    disabled={isCheckingIn}
+                                    className="flex items-center justify-center gap-3 px-8 py-4 bg-brand-600 text-white rounded-[1.25rem] font-black uppercase tracking-widest hover:bg-brand-700 transition-all shadow-lg shadow-brand-600/20 active:scale-95 disabled:opacity-50"
+                                >
+                                    {isCheckingIn ? <Loader2 className="w-5 h-5 animate-spin" /> : <MapPin className="w-5 h-5" />}
+                                    Clock In Now
+                                </button>
+                            ) : !staffAttendance.check_out_time ? (
+                                <button 
+                                    onClick={() => handleStaffCheckOut()}
+                                    disabled={isCheckingIn}
+                                    className="flex items-center justify-center gap-3 px-8 py-4 bg-gray-900 text-white dark:bg-white dark:text-gray-900 rounded-[1.25rem] font-black uppercase tracking-widest hover:bg-black dark:hover:bg-gray-100 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+                                >
+                                    {isCheckingIn ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogOut className="w-5 h-5" />}
+                                    Clock Out
+                                </button>
+                            ) : (
+                                <div className="px-6 py-4 bg-gray-50 dark:bg-gray-700/50 rounded-2xl border border-gray-100 dark:border-gray-600 flex items-center gap-3">
+                                    <CheckCircle className="w-5 h-5 text-green-500" />
+                                    <span className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Shift Completed</span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Featured Ghanaian Education Excellence Announcement */}
             <div className="mb-8 bg-brand-900 rounded-[2.5rem] p-10 text-white relative overflow-hidden shadow-2xl shadow-brand-900/40">
