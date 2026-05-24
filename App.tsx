@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<'login' | 'signup' | 'forgot-password' | 'reset-password'>('login');
+  const [impersonatedSchoolId, setImpersonatedSchoolId] = useState<string | null>(null);
 
   const lastSessionUserId = React.useRef<string | null>(null);
   const loadingTimeoutRef = React.useRef<any>(null);
@@ -257,7 +258,10 @@ CREATE TRIGGER on_transaction_success
   }
 
   return (
-    <SettingsProvider session={session} profile={profile}>
+    <SettingsProvider 
+      session={session} 
+      profile={impersonatedSchoolId && profile ? { ...profile, school_id: impersonatedSchoolId, role: UserRole.Headteacher } : profile}
+    >
       {view === 'reset-password' ? (
         <ResetPassword onComplete={() => setView('login')} />
       ) : (!session || !profile) ? (
@@ -295,7 +299,20 @@ CREATE TRIGGER on_transaction_success
         <PendingOnboarding fullName={profile.full_name} />
       ) : (
         <>
-          {profile.role === UserRole.Admin && <AdminDashboard session={session} profile={profile} />}
+          {profile.role === UserRole.Admin && !impersonatedSchoolId && (
+            <AdminDashboard 
+              session={session} 
+              profile={profile} 
+              onEnterSchool={(id) => setImpersonatedSchoolId(id)}
+            />
+          )}
+          {profile.role === UserRole.Admin && impersonatedSchoolId && (
+            <HeadteacherDashboard 
+              session={session} 
+              profile={{ ...profile, school_id: impersonatedSchoolId, role: UserRole.Headteacher }} 
+              onExitImpersonation={() => setImpersonatedSchoolId(null)}
+            />
+          )}
           {profile.role === UserRole.Headteacher && <HeadteacherDashboard session={session} profile={profile} />}
           {profile.role === UserRole.Teacher && <TeacherDashboard session={session} profile={profile} />}
           {profile.role === UserRole.Student && <StudentDashboard session={session} profile={profile} />}

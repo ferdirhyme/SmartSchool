@@ -146,7 +146,11 @@ const DashboardLayout: React.FC<DashboardLayoutProps> = ({ profile, navItems, ac
               <div key={item.label} className="mb-1">
                   <button
                       onClick={() => {
-                        setActivePage(item.label);
+                        if (item.onClick) {
+                          item.onClick();
+                        } else {
+                          setActivePage(item.label);
+                        }
                         if (!item.subItems) setIsMobileMenuOpen(false);
                       }}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group ${isActive ? 'bg-brand-800 text-white shadow-sm' : isChildActive ? 'text-white' : 'text-brand-100/70 hover:bg-brand-800/50 hover:text-white'}`}

@@ -4,6 +4,7 @@ import { Session } from '@supabase/supabase-js';
 import { Profile, UserRole, ReportType } from '../../types.ts';
 import DashboardLayout from '../layout/DashboardLayout.tsx';
 import { getNavItemsByRole } from '../../lib/navigation.ts';
+import { ArrowLeft } from 'lucide-react';
 import AddStudent from '../pages/AddStudent.tsx';
 import ManageSubjects from '../pages/ManageSubjects.tsx';
 import ManageClasses from '../pages/ManageClasses.tsx';
@@ -36,12 +37,17 @@ import AccountingPage from '../pages/AccountingPage.tsx';
 interface DashboardProps {
   session: Session;
   profile: Profile;
+  onExitImpersonation?: () => void;
 }
 
-const HeadteacherDashboard: React.FC<DashboardProps> = ({ session, profile }) => {
+const HeadteacherDashboard: React.FC<DashboardProps> = ({ session, profile, onExitImpersonation }) => {
   const [activePage, setActivePage] = useState<string | { page: string; conversationId?: string; teacherProfile?: Profile }>('Dashboard');
   const [selectedReport, setSelectedReport] = useState<ReportType | null>(null);
-  const navItems = getNavItemsByRole(UserRole.Headteacher);
+  
+  const baseNavItems = getNavItemsByRole(UserRole.Headteacher);
+  const navItems = onExitImpersonation 
+    ? [{ label: 'Back to Admin', icon: ArrowLeft, onClick: onExitImpersonation }, ...baseNavItems]
+    : baseNavItems;
   
   const isViewingReport = !!selectedReport;
 

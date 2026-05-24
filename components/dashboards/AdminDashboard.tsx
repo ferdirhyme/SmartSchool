@@ -18,6 +18,7 @@ import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 interface AdminDashboardProps {
   session: any;
   profile: Profile;
+  onEnterSchool?: (schoolId: string) => void;
 }
 
 const adminNavItems: NavItem[] = [
@@ -33,7 +34,7 @@ const adminNavItems: NavItem[] = [
   { label: 'Advanced Tools', icon: ShieldCheck },
 ];
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ session, profile }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ session, profile, onEnterSchool }) => {
   const [activePage, setActivePage] = useState('Overview');
   const [schools, setSchools] = useState<School[]>([]);
   const [pendingHeadteachers, setPendingHeadteachers] = useState<Profile[]>([]);
@@ -345,22 +346,146 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ session, profile }) => 
               </div>
             </div>
 
-            <div className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-2xl border border-blue-100 dark:border-blue-800">
-              <h2 className="text-blue-800 dark:text-blue-300 font-bold text-lg">Platform Administration</h2>
-              <p className="text-blue-600 dark:text-blue-400 mt-1">Welcome to the Superadmin dashboard. From here you can manage all school entities and platform-wide settings.</p>
-              <div className="mt-4 flex gap-4">
-                <button 
-                  onClick={() => setActivePage('Payment Gateway')}
-                  className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-bold hover:bg-brand-700 transition-colors"
-                >
-                  Configure Payment Gateways
-                </button>
-                <button 
-                  onClick={() => setActivePage('Platform Analytics')}
-                  className="px-4 py-2 bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 border border-brand-200 dark:border-brand-800 rounded-lg text-sm font-bold hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors"
-                >
-                  View Network Analytics
-                </button>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2 space-y-6">
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-2xl border border-blue-100 dark:border-blue-800">
+                  <h2 className="text-blue-800 dark:text-blue-300 font-bold text-lg">Platform Administration</h2>
+                  <p className="text-blue-600 dark:text-blue-400 mt-1">Welcome to the Superadmin dashboard. From here you can manage all school entities and platform-wide settings.</p>
+                  <div className="mt-4 flex gap-4 flex-wrap">
+                    <button 
+                      onClick={() => setActivePage('Payment Gateway')}
+                      className="px-4 py-2 bg-brand-600 text-white rounded-lg text-sm font-bold hover:bg-brand-700 transition-colors"
+                    >
+                      Configure Payment Gateways
+                    </button>
+                    <button 
+                      onClick={() => setActivePage('Platform Analytics')}
+                      className="px-4 py-2 bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 border border-brand-200 dark:border-brand-800 rounded-lg text-sm font-bold hover:bg-brand-50 dark:hover:bg-brand-900/20 transition-colors"
+                    >
+                      View Network Analytics
+                    </button>
+                    <button 
+                      onClick={() => setShowAddSchool(true)}
+                      className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add New School
+                    </button>
+                  </div>
+                </div>
+
+                {showAddSchool && (
+                  <form onSubmit={handleCreateSchool} className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-brand-100 dark:border-brand-900 shadow-lg animate-in fade-in slide-in-from-top-4">
+                    <h3 className="font-bold mb-4">Register New School</h3>
+                    <div className="flex gap-4">
+                      <input 
+                        required
+                        autofocus
+                        value={newSchoolName}
+                        onChange={e => setNewSchoolName(e.target.value)}
+                        placeholder="School Legal Name"
+                        className="flex-1 p-2.5 border rounded-lg dark:bg-gray-700 dark:border-gray-600 outline-none focus:ring-2 focus:ring-brand-500"
+                      />
+                      <button 
+                        disabled={isActionLoading}
+                        className="bg-brand-600 text-white px-6 py-2 rounded-lg font-bold disabled:opacity-50"
+                      >
+                        {isActionLoading ? 'Creating...' : 'Create'}
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={() => setShowAddSchool(false)}
+                        className="px-4 py-2 text-gray-500 hover:text-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm relative overflow-hidden">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-lg font-black tracking-tight text-gray-900 dark:text-white uppercase">Our Schools</h3>
+                    <button 
+                      onClick={() => setActivePage('Schools')}
+                      className="text-brand-600 dark:text-brand-400 text-xs font-bold hover:underline"
+                    >
+                      View All
+                    </button>
+                  </div>
+                  <div className="space-y-4">
+                    {schools.slice(0, 5).map(school => (
+                      <div key={school.id} className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-900/40 rounded-xl border border-gray-100 dark:border-gray-700 group hover:shadow-md transition-all">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 rounded-xl bg-white dark:bg-gray-800 flex items-center justify-center font-black text-brand-600 shadow-sm border border-gray-100 dark:border-gray-700">
+                             {school.name[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-bold text-gray-900 dark:text-white leading-none">{school.name}</p>
+                            <p className="text-[10px] uppercase font-bold text-gray-400 mt-1">{new Date(school.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => onEnterSchool?.(school.id)}
+                            className="px-3 py-1.5 bg-brand-600 text-white rounded-lg text-xs font-bold hover:bg-brand-700 transition-colors shadow-sm"
+                          >
+                            Enter Dashboard
+                          </button>
+                          <button 
+                            onClick={() => setSelectedSchoolToManage(school)}
+                            className="px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded-lg text-xs font-bold text-gray-600 dark:text-gray-400 hover:bg-brand-50 dark:hover:bg-brand-900/20 hover:text-brand-600 transition-colors"
+                          >
+                            Manage
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {schools.length === 0 && (
+                      <p className="text-center py-8 text-gray-500">No schools have been registered yet.</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                 {/* Authorizations Quick View */}
+                 <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
+                    <h3 className="text-lg font-black tracking-tight text-gray-900 dark:text-white uppercase mb-4 flex items-center justify-between">
+                       Verification
+                       <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{pendingHeadteachers.length + pendingTeachers.length}</span>
+                    </h3>
+                    <div className="space-y-3">
+                       {[...pendingHeadteachers, ...pendingTeachers].slice(0, 3).map(user => (
+                         <div key={user.id} className="p-3 bg-amber-50/50 dark:bg-amber-900/10 rounded-xl border border-amber-100/50 dark:border-amber-800/30">
+                            <p className="font-bold text-xs truncate leading-none mb-1">{user.full_name}</p>
+                            <p className="text-[9px] uppercase font-bold text-amber-600 mb-2">{user.role}</p>
+                            <button 
+                              onClick={() => setActivePage('Authorizations')}
+                              className="w-full py-1.5 bg-amber-600 text-white rounded-lg text-[10px] font-bold hover:bg-amber-700 transition-colors"
+                            >
+                              Go to Verification
+                            </button>
+                         </div>
+                       ))}
+                       {pendingHeadteachers.length + pendingTeachers.length === 0 && (
+                          <p className="text-xs text-gray-500 text-center py-4">No pending authorizations</p>
+                       )}
+                    </div>
+                 </div>
+
+                 {/* Help Card */}
+                 <div className="bg-brand-900 text-white p-6 rounded-3xl shadow-xl shadow-brand-900/20 relative overflow-hidden group">
+                    <div className="absolute -right-4 -bottom-4 w-24 h-24 bg-white/10 rounded-full scale-150 group-hover:scale-[2] transition-transform duration-700"></div>
+                    <h3 className="text-lg font-bold mb-2 z-10 relative">Super Admin Guide</h3>
+                    <p className="text-xs text-brand-100 leading-relaxed mb-4 z-10 relative">This workspace allows you to control the entire SmartSchool network in Ghana. Add schools, authorize leaders, and monitor growth.</p>
+                    <button 
+                       onClick={() => setActivePage('Advanced Tools')}
+                       className="w-full py-3 bg-white text-brand-900 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-brand-50 transition-colors z-10 relative"
+                    >
+                      System Config
+                    </button>
+                 </div>
               </div>
             </div>
           </div>
@@ -435,6 +560,12 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ session, profile }) => 
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-4">
+                          <button 
+                            onClick={() => onEnterSchool?.(school.id)}
+                            className="text-emerald-600 dark:text-emerald-400 hover:underline text-sm font-bold"
+                          >
+                            Dashboard
+                          </button>
                           <button 
                             onClick={() => setSelectedSchoolToManage(school)}
                             className="text-brand-600 hover:underline text-sm font-medium"

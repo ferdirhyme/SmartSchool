@@ -22,7 +22,8 @@ import { MessageSquare, Users, Video } from 'lucide-react';
 export interface NavItem {
   label: string;
   icon: React.FC<{ className?: string }>;
-  subItems?: Omit<NavItem, 'icon' | 'subItems'>[];
+  subItems?: Omit<NavItem, 'icon' | 'subItems' | 'onClick'>[];
+  onClick?: () => void;
 }
 
 const headteacherNavItems: NavItem[] = [
